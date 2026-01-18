@@ -13,9 +13,10 @@ wasm-bindgen-x = "0.2.106-alpha.1"
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
-# Desktop feature needed for examples
-dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["desktop"] }
+dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["desktop", "web"] }
 
 [[example]]
 name = "stress_test"
-required-features = []
+
+[[example]]
+name = "web_demo"

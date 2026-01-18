@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dioxus-virtual-scroll</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      line-height: 1.6;
+    }
+    h1 { color: #fff; margin-bottom: 0.5rem; }
+    p { color: #888; }
+    a { color: #6ea8fe; }
+    code {
+      background: #2a2a4e;
+      padding: 0.2em 0.4em;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .links {
+      margin-top: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .link-card {
+      background: #2a2a4e;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .link-card:hover { background: #3a3a5e; }
+    .link-card h2 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.2rem; }
+    .link-card p { margin: 0; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>dioxus-virtual-scroll</h1>
+  <p>Virtual scrolling grid component for Dioxus. Renders only visible items.</p>
+  
+  <div class="links">
+    <a class="link-card" href="./web_demo.html">
+      <h2>Web Demo</h2>
+      <p>Interactive demo with configurable album count. Test scrolling and resize behavior.</p>
+    </a>
+    <a class="link-card" href="https://github.com/hideselfview/dioxus-virtual-scroll">
+      <h2>GitHub</h2>
+      <p>Source code, issues, and documentation.</p>
+    </a>
+  </div>
+
+  <h2 style="margin-top: 3rem;">Quick Start</h2>
+  <pre style="background: #2a2a4e; padding: 1rem; border-radius: 8px; overflow-x: auto;"><code>cargo add dioxus-virtual-scroll</code></pre>
+
+  <p style="margin-top: 2rem; font-size: 0.85rem; color: #666;">
+    Grid layout only. List layout planned. See README for known issues with Dioxus desktop.
+  </p>
+</body>
+</html>
