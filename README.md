@@ -1,20 +1,22 @@
 # dioxus-virtual-scroll
 
-Virtual scrolling for Dioxus. Renders only visible items.
+Virtual scrolling for Dioxus.
+
+https://github.com/user-attachments/assets/c85c43f8-efd9-41de-9361-a030e36621bd
 
 ## Status
 
-Early development. API will change.
+Early development. Basic features work.
 
 ## Features
 
 - **Grid layout** - auto-fills columns based on container width
-- **Scroll targets** - scroll within a container or use window scrolling
-- **Auto-measurement** - measures container and item dimensions via ResizeObserver
+- **Auto-measurement** - measures container and item dimensions with ResizeObserver
 
 ## Not Implemented
 
 - **List layout** - single column virtualized list
+- **Initial scroll** - always beings at 0
 - **Scroll handle** - programmatic seeking to specific items
 
 ## Usage
@@ -50,11 +52,11 @@ rsx! {
 ## Examples
 
 ```bash
-# Desktop stress test (demonstrates IPC issue under load)
-cargo run --example stress_test
-
 # Web demo (for browser testing)
 dx serve --example web_demo
+
+# Desktop stress test (demonstrates IPC issue under load)
+cargo run --example stress_test
 ```
 
 ## Development
