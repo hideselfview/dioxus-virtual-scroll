@@ -4,12 +4,16 @@
 //!
 //! ## Scroll Target
 //!
-//! By default, the grid creates its own scrollable container. Set `scroll_target` to `"body"`
+//! By default, the grid creates its own scrollable container. Set `scroll_target` to `Window`
 //! to use window scrolling instead (useful when the grid is in a page that scrolls).
 
 use dioxus::prelude::*;
 use std::rc::Rc;
 use wasm_bindgen_x::prelude::*;
+
+// =============================================================================
+// Cleanup handles
+// =============================================================================
 
 /// Cleanup handle for ResizeObserver - disconnects on drop
 struct ResizeObserverCleanup {
@@ -43,6 +47,10 @@ impl Drop for WindowListenersCleanup {
         }
     }
 }
+
+// =============================================================================
+// Public types
+// =============================================================================
 
 /// Scroll target for the virtual grid
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -155,13 +163,17 @@ impl GridLayout {
     }
 }
 
+// =============================================================================
+// Public component - entry point
+// =============================================================================
+
 /// Virtual scrolling grid that only renders visible items
 #[component]
 pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
     items: Vec<T>,
     config: VirtualGridConfig,
     render_item: RenderFn<T>,
-    /// Function to extract a stable key from each item (for DOM reconciliation and scroll-to)
+    /// Function to extract a stable key from each item
     key_fn: KeyFn<T>,
     #[props(default = "grid-item".to_string())] item_class: String,
     /// Container class - must include height constraint for virtual scrolling to work
@@ -175,43 +187,254 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
     #[props(default)]
     initial_scroll_to: Option<String>,
 ) -> Element {
+    match scroll_target {
+        ScrollTarget::Container => rsx! {
+            ContainerScrollGrid {
+                items,
+                config,
+                render_item,
+                key_fn,
+                item_class,
+                container_class,
+                initial_scroll_to,
+            }
+        },
+        ScrollTarget::Window => rsx! {
+            WindowScrollGrid {
+                items,
+                config,
+                render_item,
+                key_fn,
+                item_class,
+                initial_scroll_to,
+            }
+        },
+    }
+}
+
+// =============================================================================
+// Container scroll mode
+// =============================================================================
+
+#[component]
+fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
+    items: Vec<T>,
+    config: VirtualGridConfig,
+    render_item: RenderFn<T>,
+    key_fn: KeyFn<T>,
+    item_class: String,
+    container_class: String,
+    initial_scroll_to: Option<String>,
+) -> Element {
     let mut scroll_top = use_signal(|| 0.0_f64);
-    let mut container_width = use_signal(|| 1000.0_f64); // Default until measured
-    let mut container_height = use_signal(|| 800.0_f64); // Default until measured
+    let mut container_width = use_signal(|| 1000.0_f64);
+    let mut container_height = use_signal(|| 800.0_f64);
+    let measured_item_height: Signal<Option<f64>> = use_signal(|| None);
     let mut mounted_element: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
-    // None until measured - scroll events are deferred until this is set
-    let mut element_offset_top: Signal<Option<f64>> = use_signal(|| None);
 
-    // Measured item dimensions (override config when available)
-    let mut measured_item_height = use_signal(|| None::<f64>);
-    let mut first_item_element: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
-
-    // Track if we've warned about virtualization not working (to avoid spam)
-    let warned_for_item_count = use_hook(|| std::cell::Cell::new(0_usize));
-
-    // Throttle scroll queries to avoid overwhelming IPC with concurrent async calls
     let scroll_query_pending = use_hook(|| Rc::new(std::cell::Cell::new(false)));
 
-    // Unique ID for this grid instance
     let container_id = use_hook(|| {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         format!("virtual-grid-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
     });
 
-    // Set up window scroll/resize listeners for ScrollTarget::Window mode using web_sys_x
+    // ResizeObserver for container dimensions
+    let resize_observer_handle =
+        use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
+    {
+        let container_id = container_id.clone();
+        let resize_observer_handle = resize_observer_handle.clone();
+
+        use_effect(move || {
+            let Some(window) = web_sys_x::window() else {
+                return;
+            };
+            let Some(document) = window.document() else {
+                return;
+            };
+            let Some(element) = document.get_element_by_id(&container_id) else {
+                return;
+            };
+
+            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
+                Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                    for entry in entries {
+                        let sizes = entry.content_box_size();
+                        let size = sizes.get(0);
+                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                        let width = size.inline_size();
+                        let height = size.block_size();
+
+                        if (container_width() - width).abs() > 1.0 {
+                            container_width.set(width);
+                        }
+                        if (container_height() - height).abs() > 1.0 {
+                            container_height.set(height);
+                        }
+                    }
+                }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+            );
+
+            let observer =
+                web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref()).unwrap();
+            observer.observe(&element);
+
+            *resize_observer_handle.borrow_mut() = Some(ResizeObserverCleanup {
+                observer,
+                _callback: callback,
+            });
+        });
+    }
+
+    // Compute layout
+    let effective_config = {
+        let mut cfg = config.clone();
+        if let Some(h) = measured_item_height() {
+            cfg.item_height = h;
+        }
+        cfg
+    };
+
+    let layout = GridLayout::calculate(
+        items.len(),
+        &effective_config,
+        container_width(),
+        container_height(),
+        scroll_top(),
+    );
+
+    let visible_items: Vec<(usize, T)> = if layout.start_idx < items.len() {
+        items[layout.start_idx..layout.end_idx]
+            .iter()
+            .enumerate()
+            .map(|(i, item)| (layout.start_idx + i, item.clone()))
+            .collect()
+    } else {
+        vec![]
+    };
+
+    // Initial scroll handling
+    let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
+    {
+        let initial_scroll_to = initial_scroll_to.clone();
+        let key_fn = key_fn.clone();
+        let items = items.clone();
+        let effective_config = effective_config.clone();
+        let cw = container_width();
+
+        use_effect(move || {
+            if let Some(ref key) = initial_scroll_to {
+                if !initial_scroll_done.get() && cw > 0.0 {
+                    initial_scroll_done.set(true);
+                    if let Some(index) = items.iter().position(|item| (key_fn.0)(item) == *key) {
+                        let columns = ((cw + effective_config.gap)
+                            / (effective_config.item_width + effective_config.gap))
+                            .floor()
+                            .max(1.0) as usize;
+                        let row = index / columns;
+                        let row_height = effective_config.item_height + effective_config.gap;
+                        scroll_top.set((row as f64) * row_height);
+                    }
+                }
+            }
+        });
+    }
+
+    let container_classes =
+        format!("virtual-grid-container w-full overflow-y-auto {container_class}");
+    let container_id_for_mount = container_id.clone();
+
+    rsx! {
+        div {
+            id: "{container_id}",
+            class: "{container_classes}",
+            style: "overflow-anchor: none;",
+            onscroll: move |_evt| {
+                if scroll_query_pending.get() {
+                    return;
+                }
+
+                if let Some(element) = mounted_element.read().clone() {
+                    scroll_query_pending.set(true);
+                    let pending = scroll_query_pending.clone();
+                    spawn(async move {
+                        if let Ok(scroll) = element.get_scroll_offset().await {
+                            if (scroll_top() - scroll.y).abs() > 0.5 {
+                                scroll_top.set(scroll.y);
+                            }
+                        }
+                        pending.set(false);
+                    });
+                }
+            },
+            onmounted: move |evt| {
+                mounted_element.set(Some(evt.data()));
+                let container_id = container_id_for_mount.clone();
+
+                spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+
+                    let Some(window) = web_sys_x::window() else { return };
+                    let Some(document) = window.document() else { return };
+                    let Some(element) = document.get_element_by_id(&container_id) else { return };
+
+                    let rect = element.get_bounding_client_rect();
+                    container_width.set(rect.width());
+                    container_height.set(rect.height());
+                });
+            },
+            GridContent {
+                layout,
+                visible_items,
+                config: effective_config,
+                item_class,
+                render_item,
+                key_fn,
+                measured_item_height,
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Window scroll mode
+// =============================================================================
+
+#[component]
+fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
+    items: Vec<T>,
+    config: VirtualGridConfig,
+    render_item: RenderFn<T>,
+    key_fn: KeyFn<T>,
+    item_class: String,
+    initial_scroll_to: Option<String>,
+) -> Element {
+    let mut scroll_top = use_signal(|| 0.0_f64);
+    let mut container_width = use_signal(|| 1000.0_f64);
+    let mut container_height = use_signal(|| 800.0_f64);
+    let measured_item_height: Signal<Option<f64>> = use_signal(|| None);
+    let mut element_offset_top: Signal<Option<f64>> = use_signal(|| None);
+
+    let container_id = use_hook(|| {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        format!("virtual-grid-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+    });
+
+    // Window scroll/resize listeners
     let window_listeners_handle =
         use_hook(|| Rc::new(std::cell::RefCell::new(None::<WindowListenersCleanup>)));
-    if scroll_target == ScrollTarget::Window && window_listeners_handle.borrow().is_none() {
+
+    if window_listeners_handle.borrow().is_none() {
         if let Some(window) = web_sys_x::window() {
-            // Initial measurements
             if let Ok(inner_height) = window.inner_height() {
                 if let Some(h) = inner_height.as_f64() {
                     container_height.set(h);
                 }
             }
 
-            // Scroll handler
             let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
                 if let Some(window) = web_sys_x::window() {
                     let window_y = window.scroll_y().unwrap_or(0.0);
@@ -225,7 +448,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
             })
                 as Box<dyn FnMut()>);
 
-            // Resize handler
             let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
                 if let Some(window) = web_sys_x::window() {
                     if let Ok(h) = window.inner_height() {
@@ -266,12 +488,11 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
         }
     }
 
-    // Set up ResizeObserver for container width/height tracking using web_sys_x directly.
+    // ResizeObserver for container width only
     let resize_observer_handle =
         use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
     {
         let container_id = container_id.clone();
-        let use_height_from_observer = scroll_target == ScrollTarget::Container;
         let resize_observer_handle = resize_observer_handle.clone();
 
         use_effect(move || {
@@ -292,13 +513,9 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
                         let size = sizes.get(0);
                         let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
                         let width = size.inline_size();
-                        let height = size.block_size();
 
                         if (container_width() - width).abs() > 1.0 {
                             container_width.set(width);
-                        }
-                        if use_height_from_observer && (container_height() - height).abs() > 1.0 {
-                            container_height.set(height);
                         }
                     }
                 }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
@@ -315,7 +532,7 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
         });
     }
 
-    // Use measured item height if available, otherwise config default
+    // Compute layout
     let effective_config = {
         let mut cfg = config.clone();
         if let Some(h) = measured_item_height() {
@@ -324,64 +541,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
         cfg
     };
 
-    // Build key-to-index map for scroll-to-item functionality
-    let key_to_index: std::collections::HashMap<String, usize> = items
-        .iter()
-        .enumerate()
-        .map(|(i, item)| ((key_fn.0)(item), i))
-        .collect();
-
-    // Helper to scroll to a specific item key
-    let scroll_to_item_key = {
-        let key_to_index = key_to_index.clone();
-        let effective_config = effective_config.clone();
-        let scroll_target = scroll_target;
-
-        move |key: String| {
-            if let Some(&index) = key_to_index.get(&key) {
-                let cw = container_width();
-                let eot = element_offset_top().unwrap_or(0.0);
-
-                let columns = ((cw + effective_config.gap)
-                    / (effective_config.item_width + effective_config.gap))
-                    .floor()
-                    .max(1.0) as usize;
-                let row = index / columns;
-                let row_height = effective_config.item_height + effective_config.gap;
-                let target_scroll = (row as f64) * row_height;
-
-                if let Some(window) = web_sys_x::window() {
-                    match scroll_target {
-                        ScrollTarget::Window => {
-                            let page_y = eot + target_scroll;
-                            window.scroll_to_with_x_and_y(0.0, page_y);
-                        }
-                        ScrollTarget::Container => {
-                            scroll_top.set(target_scroll);
-                        }
-                    }
-                }
-            }
-        }
-    };
-
-    // Handle initial_scroll_to on mount
-    let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
-    {
-        let initial_scroll_to = initial_scroll_to.clone();
-        let mut scroll_to_item_key = scroll_to_item_key.clone();
-        let cw = container_width();
-        use_effect(move || {
-            if let Some(ref key) = initial_scroll_to {
-                if !initial_scroll_done.get() && cw > 0.0 {
-                    initial_scroll_done.set(true);
-                    scroll_to_item_key(key.clone());
-                }
-            }
-        });
-    }
-
-    // Calculate grid layout
     let layout = GridLayout::calculate(
         items.len(),
         &effective_config,
@@ -390,7 +549,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
         scroll_top(),
     );
 
-    // Slice visible items
     let visible_items: Vec<(usize, T)> = if layout.start_idx < items.len() {
         items[layout.start_idx..layout.end_idx]
             .iter()
@@ -401,71 +559,49 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
         vec![]
     };
 
-    // Warn if virtualization isn't working
+    // Initial scroll handling
+    let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
     {
-        let should_virtualize = items.len() > 50;
-        let is_showing_all = visible_items.len() == items.len();
-        let already_warned = warned_for_item_count.get() == items.len();
+        let initial_scroll_to = initial_scroll_to.clone();
+        let key_fn = key_fn.clone();
+        let items = items.clone();
+        let effective_config = effective_config.clone();
+        let cw = container_width();
 
-        if should_virtualize && is_showing_all && !already_warned {
-            warned_for_item_count.set(items.len());
-        }
+        use_effect(move || {
+            if let Some(ref key) = initial_scroll_to {
+                if !initial_scroll_done.get() && cw > 0.0 {
+                    initial_scroll_done.set(true);
+                    if let Some(index) = items.iter().position(|item| (key_fn.0)(item) == *key) {
+                        let columns = ((cw + effective_config.gap)
+                            / (effective_config.item_width + effective_config.gap))
+                            .floor()
+                            .max(1.0) as usize;
+                        let row = index / columns;
+                        let row_height = effective_config.item_height + effective_config.gap;
+                        let target_scroll = (row as f64) * row_height;
+
+                        if let Some(window) = web_sys_x::window() {
+                            let page_y = element_offset_top().unwrap_or(0.0) + target_scroll;
+                            window.scroll_to_with_x_and_y(0.0, page_y);
+                        }
+                    }
+                }
+            }
+        });
     }
 
-    let grid_style = format!(
-        "display: grid; grid-template-columns: repeat(auto-fill, minmax({}px, 1fr)); gap: {}px;",
-        config.item_width, config.gap
-    );
-
-    let container_classes = match scroll_target {
-        ScrollTarget::Container => {
-            format!("virtual-grid-container w-full overflow-y-auto {container_class}")
-        }
-        ScrollTarget::Window => "virtual-grid-container w-full".to_string(),
-    };
-
-    let container_style = "overflow-anchor: none;";
-
-    let scroll_target_for_scroll = scroll_target;
-    let scroll_target_for_mount = scroll_target;
     let container_id_for_mount = container_id.clone();
 
     rsx! {
         div {
             id: "{container_id}",
-            key: "{scroll_target:?}-container",
-            class: "{container_classes}",
-            style: "{container_style}",
-            onscroll: move |_evt| {
-                if scroll_target_for_scroll != ScrollTarget::Container {
-                    return;
-                }
-
-                if scroll_query_pending.get() {
-                    return;
-                }
-
-                if let Some(element) = mounted_element.read().clone() {
-                    scroll_query_pending.set(true);
-                    let pending = scroll_query_pending.clone();
-                    spawn(async move {
-                        if let Ok(scroll) = element.get_scroll_offset().await {
-                            if (scroll_top() - scroll.y).abs() > 0.5 {
-                                scroll_top.set(scroll.y);
-                            }
-                        }
-                        pending.set(false);
-                    });
-                }
-            },
-            onmounted: move |evt| {
-                let data = evt.data();
-                mounted_element.set(Some(data.clone()));
+            class: "virtual-grid-container w-full",
+            style: "overflow-anchor: none;",
+            onmounted: move |_evt| {
                 let container_id = container_id_for_mount.clone();
 
-                // Measure element position using web_sys_x directly
                 spawn(async move {
-                    // Small delay to let layout stabilize (equivalent to double rAF)
                     tokio::time::sleep(std::time::Duration::from_millis(32)).await;
 
                     let Some(window) = web_sys_x::window() else { return };
@@ -473,81 +609,98 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
                     let Some(element) = document.get_element_by_id(&container_id) else { return };
 
                     let rect = element.get_bounding_client_rect();
-                    let top = rect.top();
-                    let width = rect.width();
-                    let height = rect.height();
                     let scroll_y = window.scroll_y().unwrap_or(0.0);
+                    let page_offset = scroll_y + rect.top();
 
-                    if scroll_target_for_mount == ScrollTarget::Window {
-                        let page_offset = scroll_y + top;
-                        element_offset_top.set(Some(page_offset));
-                        container_width.set(width);
-                        let initial_scroll = (scroll_y - page_offset).max(0.0);
-                        scroll_top.set(initial_scroll);
-                    } else {
-                        container_width.set(width);
-                        container_height.set(height);
-                    }
+                    element_offset_top.set(Some(page_offset));
+                    container_width.set(rect.width());
+
+                    let initial_scroll = (scroll_y - page_offset).max(0.0);
+                    scroll_top.set(initial_scroll);
                 });
             },
-            // Top spacer
-            div {
-                key: "spacer-top",
-                class: "virtual-grid-spacer-top",
-                style: "height: {layout.top_padding}px;",
+            GridContent {
+                layout,
+                visible_items,
+                config: effective_config,
+                item_class,
+                render_item,
+                key_fn,
+                measured_item_height,
             }
+        }
+    }
+}
 
-            // Grid content
-            div {
-                key: "grid-content",
-                class: "virtual-grid-content min-h-0",
-                style: "{grid_style}",
-                for (i , (idx , item)) in visible_items.into_iter().enumerate() {
-                    {
-                        let item_key = (key_fn.0)(&item);
-                        if i == 0 {
-                            rsx! {
-                                div {
-                                    key: "{item_key}",
-                                    class: "{item_class}",
-                                    "data-index": "{idx}",
-                                    "data-key": "{item_key}",
-                                    onmounted: move |evt| {
-                                        first_item_element.set(Some(evt.data()));
-                                        spawn(async move {
-                                            if let Ok(rect) = evt.get_client_rect().await {
-                                                let h = rect.height();
-                                                if measured_item_height().is_none_or(|current| (current - h).abs() > 1.0)
-                                                {
-                                                    measured_item_height.set(Some(h));
-                                                }
+// =============================================================================
+// Shared grid content (dumb layout component)
+// =============================================================================
+
+#[component]
+fn GridContent<T: Clone + PartialEq + 'static>(
+    layout: GridLayout,
+    visible_items: Vec<(usize, T)>,
+    config: VirtualGridConfig,
+    item_class: String,
+    render_item: RenderFn<T>,
+    key_fn: KeyFn<T>,
+    measured_item_height: Signal<Option<f64>>,
+) -> Element {
+    let grid_style = format!(
+        "display: grid; grid-template-columns: repeat(auto-fill, minmax({}px, 1fr)); gap: {}px;",
+        config.item_width, config.gap
+    );
+
+    rsx! {
+        div {
+            class: "virtual-grid-spacer-top",
+            style: "height: {layout.top_padding}px;",
+        }
+
+        div {
+            class: "virtual-grid-content min-h-0",
+            style: "{grid_style}",
+            for (i, (idx, item)) in visible_items.into_iter().enumerate() {
+                {
+                    let item_key = (key_fn.0)(&item);
+                    if i == 0 {
+                        rsx! {
+                            div {
+                                key: "{item_key}",
+                                class: "{item_class}",
+                                "data-index": "{idx}",
+                                "data-key": "{item_key}",
+                                onmounted: move |evt| {
+                                    spawn(async move {
+                                        if let Ok(rect) = evt.get_client_rect().await {
+                                            let h = rect.height();
+                                            if measured_item_height().is_none_or(|current| (current - h).abs() > 1.0) {
+                                                measured_item_height.set(Some(h));
                                             }
-                                        });
-                                    },
-                                    {(render_item.0)(item, idx)}
-                                }
+                                        }
+                                    });
+                                },
+                                {(render_item.0)(item, idx)}
                             }
-                        } else {
-                            rsx! {
-                                div {
-                                    key: "{item_key}",
-                                    class: "{item_class}",
-                                    "data-index": "{idx}",
-                                    "data-key": "{item_key}",
-                                    {(render_item.0)(item, idx)}
-                                }
+                        }
+                    } else {
+                        rsx! {
+                            div {
+                                key: "{item_key}",
+                                class: "{item_class}",
+                                "data-index": "{idx}",
+                                "data-key": "{item_key}",
+                                {(render_item.0)(item, idx)}
                             }
                         }
                     }
                 }
             }
+        }
 
-            // Bottom spacer
-            div {
-                key: "spacer-bottom",
-                class: "virtual-grid-spacer-bottom",
-                style: "height: {layout.bottom_padding}px;",
-            }
+        div {
+            class: "virtual-grid-spacer-bottom",
+            style: "height: {layout.bottom_padding}px;",
         }
     }
 }
