@@ -583,6 +583,9 @@ fn GridContent<T: Clone + PartialEq + 'static>(
         config.item_width, config.gap
     );
 
+    // Only measure from first item when needed
+    let needs_measurement = measured_item_height.read().is_none();
+
     rsx! {
         div {
             class: "virtual-grid-spacer-top",
@@ -590,9 +593,10 @@ fn GridContent<T: Clone + PartialEq + 'static>(
         }
 
         div { class: "virtual-grid-content min-h-0", style: "{grid_style}",
-            for (idx , item) in visible_items.into_iter() {
+            for (i , (idx , item)) in visible_items.into_iter().enumerate() {
                 {
                     let item_key = (key_fn.0)(&item);
+                    let measure_this = i == 0 && needs_measurement;
                     rsx! {
                         div {
                             key: "{item_key}",
@@ -600,8 +604,7 @@ fn GridContent<T: Clone + PartialEq + 'static>(
                             "data-index": "{idx}",
                             "data-key": "{item_key}",
                             onmounted: move |evt| {
-                                // Skip if already measured
-                                if measured_item_height.read().is_some() {
+                                if !measure_this {
                                     return;
                                 }
                                 spawn(async move {
