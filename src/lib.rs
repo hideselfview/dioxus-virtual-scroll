@@ -335,19 +335,6 @@ fn effective_config(config: &VirtualGridConfig, measured_height: Option<f64>) ->
     cfg
 }
 
-/// Slice items to only those visible in the current viewport
-fn slice_visible_items<T: Clone>(items: &[T], layout: &GridLayout) -> Vec<(usize, T)> {
-    if layout.start_idx < items.len() {
-        items[layout.start_idx..layout.end_idx]
-            .iter()
-            .enumerate()
-            .map(|(i, item)| (layout.start_idx + i, item.clone()))
-            .collect()
-    } else {
-        vec![]
-    }
-}
-
 // =============================================================================
 // Public component - entry point
 // =============================================================================
@@ -428,7 +415,6 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
         container_height(),
         scroll_top(),
     );
-    let visible_items = slice_visible_items(&items, &layout);
 
     let container_classes =
         format!("virtual-grid-container w-full overflow-y-auto {container_class}");
@@ -478,7 +464,7 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
             },
             GridContent {
                 layout,
-                visible_items,
+                items,
                 config: eff_config,
                 item_class,
                 render_item,
@@ -520,7 +506,6 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
         container_height(),
         scroll_top(),
     );
-    let visible_items = slice_visible_items(&items, &layout);
 
     let container_id_for_mount = container_id.clone();
 
@@ -553,7 +538,7 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
             },
             GridContent {
                 layout,
-                visible_items,
+                items,
                 config: eff_config,
                 item_class,
                 render_item,
@@ -571,7 +556,7 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
 #[component]
 fn GridContent<T: Clone + PartialEq + 'static>(
     layout: GridLayout,
-    visible_items: Vec<(usize, T)>,
+    items: Vec<T>,
     config: VirtualGridConfig,
     item_class: String,
     render_item: RenderFn<T>,
@@ -593,8 +578,9 @@ fn GridContent<T: Clone + PartialEq + 'static>(
         }
 
         div { class: "virtual-grid-content min-h-0", style: "{grid_style}",
-            for (i , (idx , item)) in visible_items.into_iter().enumerate() {
+            for (i , idx) in (layout.start_idx..layout.end_idx).enumerate() {
                 {
+                    let item = items[idx].clone();
                     let item_key = (key_fn.0)(&item);
                     let measure_this = i == 0 && needs_measurement;
                     rsx! {
