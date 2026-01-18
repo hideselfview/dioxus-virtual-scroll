@@ -25,13 +25,12 @@ fn main() {
 }
 
 fn make_config() -> dioxus::desktop::Config {
-    use dioxus::desktop::tao::window::Fullscreen;
     use dioxus::desktop::wry::http::Response as HttpResponse;
     use dioxus::desktop::WindowBuilder;
 
     dioxus::desktop::Config::default()
         .with_background_color((0x1a, 0x1a, 0x2e, 0xff))
-        .with_window(WindowBuilder::new().with_fullscreen(Some(Fullscreen::Borderless(None))))
+        .with_window(WindowBuilder::new().with_maximized(true))
         .with_custom_protocol("test", move |_webview_id, request| {
             let uri = request.uri().to_string();
 
