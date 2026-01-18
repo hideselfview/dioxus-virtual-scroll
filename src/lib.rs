@@ -31,6 +31,8 @@ impl Drop for ResizeObserverCleanup {
 struct WindowListenersCleanup {
     scroll_callback: Closure<dyn FnMut()>,
     resize_callback: Closure<dyn FnMut()>,
+    #[allow(dead_code)] // Prevent raf_callback from being dropped
+    raf_callback: Rc<Closure<dyn FnMut()>>,
 }
 
 impl Drop for WindowListenersCleanup {
@@ -251,35 +253,37 @@ fn use_window_scroll_listeners(
             }
         }
 
-        // rAF-based throttling for scroll events
+        // rAF-based throttling: pending flag shared between scroll and rAF callbacks
         let scroll_pending = Rc::new(std::cell::Cell::new(false));
-        let scroll_pending_for_closure = scroll_pending.clone();
 
-        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-            if scroll_pending_for_closure.get() {
-                return;
-            }
-            scroll_pending_for_closure.set(true);
-
-            let pending = scroll_pending_for_closure.clone();
-            let raf_callback: Closure<dyn FnMut()> = Closure::once(Box::new(move || {
-                pending.set(false);
-                if let Some(window) = web_sys_x::window() {
-                    let window_y = window.scroll_y().unwrap_or(0.0);
-                    if let Some(offset) = element_offset_top() {
-                        let new_scroll_top = (window_y - offset).max(0.0);
-                        if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                            scroll_top.set(new_scroll_top);
-                        }
+        // Create rAF callback once - it reads current scroll position and updates signal
+        let pending_for_raf = scroll_pending.clone();
+        let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
+            pending_for_raf.set(false);
+            if let Some(window) = web_sys_x::window() {
+                let window_y = window.scroll_y().unwrap_or(0.0);
+                if let Some(offset) = element_offset_top() {
+                    let new_scroll_top = (window_y - offset).max(0.0);
+                    if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                        scroll_top.set(new_scroll_top);
                     }
                 }
-            })
-                as Box<dyn FnMut()>);
+            }
+        })
+            as Box<dyn FnMut()>));
+
+        // Scroll handler schedules the rAF callback if not already pending
+        let pending_for_scroll = scroll_pending.clone();
+        let raf_for_scroll = raf_callback.clone();
+        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+            if pending_for_scroll.get() {
+                return;
+            }
+            pending_for_scroll.set(true);
 
             if let Some(window) = web_sys_x::window() {
-                let _ = window.request_animation_frame(raf_callback.as_ref().unchecked_ref());
+                let _ = window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
             }
-            raf_callback.forget(); // One-shot callback, intentionally leaked
         }) as Box<dyn FnMut()>);
 
         let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
@@ -317,6 +321,7 @@ fn use_window_scroll_listeners(
         *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
             scroll_callback: scroll_closure,
             resize_callback: resize_closure,
+            raf_callback,
         });
     });
 }
