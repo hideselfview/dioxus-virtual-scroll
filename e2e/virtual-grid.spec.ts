@@ -301,4 +301,79 @@ test.describe('VirtualGrid', () => {
     
     console.log(`Found ${count} items with data-key, first key: ${firstKey}`);
   });
+
+  test('initial_scroll_to scrolls to specified item on remount', async ({ page }) => {
+    await page.locator('input[type="number"]').fill('200');
+    await page.waitForTimeout(300);
+
+    // Should be at top initially
+    let scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBeLessThan(50);
+
+    // Set scroll_to and remount
+    await page.locator('input[type="text"]').fill('100');
+    await page.getByRole('button', { name: 'Remount' }).click();
+    await page.waitForTimeout(500);
+
+    // Should have scrolled down
+    scrollY = await page.evaluate(() => window.scrollY);
+    expect(scrollY).toBeGreaterThan(500);
+
+    // Item 100 should be visible
+    const visibleKeys = await page.locator('.virtual-grid-content > div[data-key]').evaluateAll(
+      els => els.map(el => parseInt(el.getAttribute('data-key')!, 10))
+    );
+    const minKey = Math.min(...visibleKeys);
+    const maxKey = Math.max(...visibleKeys);
+    
+    // Item 100 should be in or near visible range
+    expect(100).toBeGreaterThanOrEqual(minKey - 10);
+    expect(100).toBeLessThanOrEqual(maxKey + 10);
+    
+    console.log(`scrollY: ${scrollY}, visible keys: ${minKey}-${maxKey}`);
+  });
+
+  test('cleanup - no memory leak on repeated mount/unmount', async ({ page }) => {
+    test.setTimeout(180000);
+
+    // Use CDP for accurate heap measurement
+    const client = await page.context().newCDPSession(page);
+    
+    async function getHeapMB(): Promise<number> {
+      await client.send('HeapProfiler.collectGarbage');
+      const { usedSize } = await client.send('Runtime.getHeapUsage');
+      return usedSize / 1024 / 1024;
+    }
+
+    await page.locator('input[type="number"]').fill('100');
+    await page.waitForTimeout(500);
+
+    const baseline = await getHeapMB();
+    console.log(`Baseline heap: ${baseline.toFixed(2)} MB`);
+
+    const CYCLES = 100;
+    const measurements: { cycle: number; heap: number }[] = [];
+
+    for (let i = 1; i <= CYCLES; i++) {
+      await page.getByRole('button', { name: 'Remount' }).click();
+      await page.waitForTimeout(30);
+
+      if (i % 25 === 0) {
+        const heap = await getHeapMB();
+        measurements.push({ cycle: i, heap });
+        console.log(`After ${i} cycles: ${heap.toFixed(2)} MB (Δ ${(heap - baseline).toFixed(2)} MB)`);
+      }
+    }
+
+    const final = await getHeapMB();
+    console.log(`\nFINAL: ${final.toFixed(2)} MB after ${CYCLES} cycles`);
+    console.log(`Growth: ${(final - baseline).toFixed(2)} MB`);
+
+    const growthPerCycle = (final - baseline) / CYCLES;
+    console.log(`Growth per cycle: ${(growthPerCycle * 1024).toFixed(2)} KB`);
+
+    // Without leaks, growth should be near 0 (GC cleans up)
+    // Threshold of 5KB per cycle catches real leaks while allowing noise
+    expect(growthPerCycle, 'Memory growing linearly - leak detected!').toBeLessThan(0.005);
+  });
 });
