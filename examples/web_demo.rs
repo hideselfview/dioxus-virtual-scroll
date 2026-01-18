@@ -107,6 +107,11 @@ fn App() -> Element {
                         option { value: "container", "Container" }
                     }
                 }
+                button {
+                    style: "padding: 4px 12px; cursor: pointer;",
+                    onclick: move |_| cycle += 1,
+                    "Remount"
+                }
             }
         }
         div { style: "padding: 0 20px 20px 20px;",
