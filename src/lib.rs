@@ -70,7 +70,7 @@ impl<T> PartialEq for RenderFn<T> {
     }
 }
 
-/// Function to extract a stable key from an item for DOM reconciliation and scroll-to-item.
+/// Function to extract a stable key from an item for DOM reconciliation.
 pub struct KeyFn<T>(pub Rc<dyn Fn(&T) -> String>);
 
 impl<T> Clone for KeyFn<T> {
@@ -82,19 +82,6 @@ impl<T> Clone for KeyFn<T> {
 impl<T> PartialEq for KeyFn<T> {
     fn eq(&self, _other: &Self) -> bool {
         false // Conservative: assume key function may have changed
-    }
-}
-
-/// Handle for imperative control of VirtualGrid (e.g., scroll to item)
-#[derive(Clone)]
-pub struct VirtualGridHandle {
-    scroll_to_key: Rc<dyn Fn(String)>,
-}
-
-impl VirtualGridHandle {
-    /// Scroll to bring the item with the given key into view
-    pub fn scroll_to_item(&self, key: &str) {
-        (self.scroll_to_key)(key.to_string())
     }
 }
 
@@ -187,10 +174,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
     /// Key of item to scroll to on mount
     #[props(default)]
     initial_scroll_to: Option<String>,
-    /// Signal to receive handle for imperative scroll control.
-    /// Parent creates with `use_signal(|| None)`, child populates it.
-    #[props(default)]
-    handle: Option<Signal<Option<VirtualGridHandle>>>,
 ) -> Element {
     let mut scroll_top = use_signal(|| 0.0_f64);
     let mut container_width = use_signal(|| 1000.0_f64); // Default until measured
@@ -381,20 +364,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
             }
         }
     };
-
-    // Provide handle to parent if requested
-    if let Some(mut handle_signal) = handle {
-        let scroll_fn = scroll_to_item_key.clone();
-        let new_handle = VirtualGridHandle {
-            scroll_to_key: Rc::new(move |key| {
-                let mut scroll_fn = scroll_fn.clone();
-                scroll_fn(key)
-            }),
-        };
-        if handle_signal().is_none() {
-            handle_signal.set(Some(new_handle));
-        }
-    }
 
     // Handle initial_scroll_to on mount
     let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
