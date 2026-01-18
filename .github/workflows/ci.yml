@@ -57,7 +57,7 @@ jobs:
       - uses: cargo-bins/cargo-binstall@main
       - run: cargo binstall dioxus-cli@0.7.2 -y
       - name: Build web demo
-        run: dx build --example web_demo --release
+        run: dx build --example web_demo --release --platform web
       - name: Prepare docs
         run: |
           mkdir -p docs/demo
