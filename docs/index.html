@@ -49,28 +49,25 @@
       border-radius: 8px;
       text-decoration: none;
       transition: background 0.2s;
+      border: 1px solid #3a3a5e;
     }
-    .link-card:hover { background: #3a3a5e; }
-    .link-card h3 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.1rem; }
-    .link-card p { margin: 0; font-size: 0.9rem; color: #888; }
+    .link-card:hover { background: #3a3a5e; border-color: #6ea8fe; }
+    .link-card h3 { color: #6ea8fe; margin: 0; font-size: 1rem; }
+    .link-card h3::after { content: " →"; }
   </style>
 </head>
 <body>
   <h1>dioxus-virtual-scroll</h1>
   <p>A virtual scrolling grid component for <a href="https://dioxuslabs.com">Dioxus</a>. Renders only visible items plus a buffer, using spacer elements to maintain scroll height.</p>
 
-  <h2>Features</h2>
   <ul>
-    <li>Grid layout, columns calculated from container width</li>
-    <li>Container scroll or window scroll modes</li>
-    <li>Measures item height automatically</li>
-    <li>ResizeObserver for dimensions, rAF-throttled scroll</li>
+    <li>Grid layout - auto-fills columns based on container width</li>
+    <li>Auto-measurement - measures container and item dimensions with ResizeObserver</li>
   </ul>
 
   <div class="links">
     <a class="link-card" href="./demo/">
       <h3>Live Demo</h3>
-      <p>Interactive demo with toggle between container and window scroll modes.</p>
     </a>
   </div>
 
@@ -99,11 +96,9 @@ rsx! {
   <div class="links">
     <a class="link-card" href="https://github.com/hideselfview/dioxus-virtual-scroll">
       <h3>GitHub</h3>
-      <p>Source code, issues, and documentation.</p>
     </a>
     <a class="link-card" href="https://crates.io/crates/dioxus-virtual-scroll">
       <h3>crates.io</h3>
-      <p>Rust package registry.</p>
     </a>
   </div>
 </body>
