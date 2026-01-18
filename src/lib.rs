@@ -176,6 +176,151 @@ fn use_container_id() -> String {
     })
 }
 
+/// Hook to observe container resize via ResizeObserver.
+/// Updates width_signal always; updates height_signal if Some.
+fn use_resize_observer(
+    container_id: String,
+    mut width_signal: Signal<f64>,
+    height_signal: Option<Signal<f64>>,
+) {
+    let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
+    let handle_clone = handle.clone();
+
+    use_effect(move || {
+        let Some(window) = web_sys_x::window() else {
+            return;
+        };
+        let Some(document) = window.document() else {
+            return;
+        };
+        let Some(element) = document.get_element_by_id(&container_id) else {
+            return;
+        };
+
+        let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
+            Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                for entry in entries {
+                    let sizes = entry.content_box_size();
+                    let size = sizes.get(0);
+                    let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                    let width = size.inline_size();
+
+                    if (width_signal() - width).abs() > 1.0 {
+                        width_signal.set(width);
+                    }
+
+                    if let Some(mut h_sig) = height_signal {
+                        let height = size.block_size();
+                        if (h_sig() - height).abs() > 1.0 {
+                            h_sig.set(height);
+                        }
+                    }
+                }
+            }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+        );
+
+        let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .expect("ResizeObserver should be supported");
+        observer.observe(&element);
+
+        *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
+            observer,
+            _callback: callback,
+        });
+    });
+}
+
+/// Hook to set up window scroll and resize listeners for window-scroll mode.
+fn use_window_scroll_listeners(
+    mut scroll_top: Signal<f64>,
+    mut container_height: Signal<f64>,
+    element_offset_top: Signal<Option<f64>>,
+) {
+    let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<WindowListenersCleanup>)));
+    let handle_clone = handle.clone();
+
+    use_effect(move || {
+        let Some(window) = web_sys_x::window() else {
+            return;
+        };
+
+        // Set initial height from window
+        if let Ok(inner_height) = window.inner_height() {
+            if let Some(h) = inner_height.as_f64() {
+                container_height.set(h);
+            }
+        }
+
+        // rAF-based throttling for scroll events
+        let scroll_pending = Rc::new(std::cell::Cell::new(false));
+        let scroll_pending_for_closure = scroll_pending.clone();
+
+        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+            if scroll_pending_for_closure.get() {
+                return;
+            }
+            scroll_pending_for_closure.set(true);
+
+            let pending = scroll_pending_for_closure.clone();
+            let raf_callback: Closure<dyn FnMut()> = Closure::once(Box::new(move || {
+                pending.set(false);
+                if let Some(window) = web_sys_x::window() {
+                    let window_y = window.scroll_y().unwrap_or(0.0);
+                    if let Some(offset) = element_offset_top() {
+                        let new_scroll_top = (window_y - offset).max(0.0);
+                        if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                            scroll_top.set(new_scroll_top);
+                        }
+                    }
+                }
+            })
+                as Box<dyn FnMut()>);
+
+            if let Some(window) = web_sys_x::window() {
+                let _ = window.request_animation_frame(raf_callback.as_ref().unchecked_ref());
+            }
+            raf_callback.forget(); // One-shot callback, intentionally leaked
+        }) as Box<dyn FnMut()>);
+
+        let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+            if let Some(window) = web_sys_x::window() {
+                if let Ok(h) = window.inner_height() {
+                    if let Some(h) = h.as_f64() {
+                        if (container_height() - h).abs() > 1.0 {
+                            container_height.set(h);
+                        }
+                    }
+                }
+            }
+        }) as Box<dyn FnMut()>);
+
+        let scroll_options = web_sys_x::AddEventListenerOptions::new();
+        scroll_options.set_passive(true);
+        window
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                "scroll",
+                scroll_closure.as_ref().unchecked_ref(),
+                &scroll_options,
+            )
+            .ok();
+
+        let resize_options = web_sys_x::AddEventListenerOptions::new();
+        resize_options.set_passive(true);
+        window
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                "resize",
+                resize_closure.as_ref().unchecked_ref(),
+                &resize_options,
+            )
+            .ok();
+
+        *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
+            scroll_callback: scroll_closure,
+            resize_callback: resize_closure,
+        });
+    });
+}
+
 /// Compute effective config with measured item height override
 fn effective_config(config: &VirtualGridConfig, measured_height: Option<f64>) -> VirtualGridConfig {
     let mut cfg = config.clone();
@@ -263,53 +408,11 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
     let scroll_query_pending = use_hook(|| Rc::new(std::cell::Cell::new(false)));
     let container_id = use_container_id();
 
-    // ResizeObserver for container dimensions
-    let resize_observer_handle =
-        use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
-    {
-        let container_id = container_id.clone();
-        let resize_observer_handle = resize_observer_handle.clone();
-
-        use_effect(move || {
-            let Some(window) = web_sys_x::window() else {
-                return;
-            };
-            let Some(document) = window.document() else {
-                return;
-            };
-            let Some(element) = document.get_element_by_id(&container_id) else {
-                return;
-            };
-
-            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
-                Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                    for entry in entries {
-                        let sizes = entry.content_box_size();
-                        let size = sizes.get(0);
-                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                        let width = size.inline_size();
-                        let height = size.block_size();
-
-                        if (container_width() - width).abs() > 1.0 {
-                            container_width.set(width);
-                        }
-                        if (container_height() - height).abs() > 1.0 {
-                            container_height.set(height);
-                        }
-                    }
-                }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
-            );
-
-            let observer =
-                web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref()).unwrap();
-            observer.observe(&element);
-
-            *resize_observer_handle.borrow_mut() = Some(ResizeObserverCleanup {
-                observer,
-                _callback: callback,
-            });
-        });
-    }
+    use_resize_observer(
+        container_id.clone(),
+        container_width,
+        Some(container_height),
+    );
 
     // Compute layout
     let eff_config = effective_config(&config, measured_item_height());
@@ -395,119 +498,13 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
 ) -> Element {
     let mut scroll_top = use_signal(|| 0.0_f64);
     let mut container_width = use_signal(|| 1000.0_f64);
-    let mut container_height = use_signal(|| 800.0_f64);
+    let container_height = use_signal(|| 800.0_f64);
     let measured_item_height: Signal<Option<f64>> = use_signal(|| None);
     let mut element_offset_top: Signal<Option<f64>> = use_signal(|| None);
     let container_id = use_container_id();
 
-    // Window scroll/resize listeners
-    let window_listeners_handle =
-        use_hook(|| Rc::new(std::cell::RefCell::new(None::<WindowListenersCleanup>)));
-
-    if window_listeners_handle.borrow().is_none() {
-        if let Some(window) = web_sys_x::window() {
-            if let Ok(inner_height) = window.inner_height() {
-                if let Some(h) = inner_height.as_f64() {
-                    container_height.set(h);
-                }
-            }
-
-            let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-                if let Some(window) = web_sys_x::window() {
-                    let window_y = window.scroll_y().unwrap_or(0.0);
-                    if let Some(offset) = element_offset_top() {
-                        let new_scroll_top = (window_y - offset).max(0.0);
-                        if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                            scroll_top.set(new_scroll_top);
-                        }
-                    }
-                }
-            })
-                as Box<dyn FnMut()>);
-
-            let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-                if let Some(window) = web_sys_x::window() {
-                    if let Ok(h) = window.inner_height() {
-                        if let Some(h) = h.as_f64() {
-                            if (container_height() - h).abs() > 1.0 {
-                                container_height.set(h);
-                            }
-                        }
-                    }
-                }
-            })
-                as Box<dyn FnMut()>);
-
-            let scroll_options = web_sys_x::AddEventListenerOptions::new();
-            scroll_options.set_passive(true);
-            window
-                .add_event_listener_with_callback_and_add_event_listener_options(
-                    "scroll",
-                    scroll_closure.as_ref().unchecked_ref(),
-                    &scroll_options,
-                )
-                .ok();
-
-            let resize_options = web_sys_x::AddEventListenerOptions::new();
-            resize_options.set_passive(true);
-            window
-                .add_event_listener_with_callback_and_add_event_listener_options(
-                    "resize",
-                    resize_closure.as_ref().unchecked_ref(),
-                    &resize_options,
-                )
-                .ok();
-
-            *window_listeners_handle.borrow_mut() = Some(WindowListenersCleanup {
-                scroll_callback: scroll_closure,
-                resize_callback: resize_closure,
-            });
-        }
-    }
-
-    // ResizeObserver for container width only
-    let resize_observer_handle =
-        use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
-    {
-        let container_id = container_id.clone();
-        let resize_observer_handle = resize_observer_handle.clone();
-
-        use_effect(move || {
-            let Some(window) = web_sys_x::window() else {
-                return;
-            };
-            let Some(document) = window.document() else {
-                return;
-            };
-            let Some(element) = document.get_element_by_id(&container_id) else {
-                return;
-            };
-
-            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
-                Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                    for entry in entries {
-                        let sizes = entry.content_box_size();
-                        let size = sizes.get(0);
-                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                        let width = size.inline_size();
-
-                        if (container_width() - width).abs() > 1.0 {
-                            container_width.set(width);
-                        }
-                    }
-                }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
-            );
-
-            let observer =
-                web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref()).unwrap();
-            observer.observe(&element);
-
-            *resize_observer_handle.borrow_mut() = Some(ResizeObserverCleanup {
-                observer,
-                _callback: callback,
-            });
-        });
-    }
+    use_window_scroll_listeners(scroll_top, container_height, element_offset_top);
+    use_resize_observer(container_id.clone(), container_width, None);
 
     // Compute layout
     let eff_config = effective_config(&config, measured_item_height());
@@ -588,39 +585,31 @@ fn GridContent<T: Clone + PartialEq + 'static>(
         }
 
         div { class: "virtual-grid-content min-h-0", style: "{grid_style}",
-            for (i , (idx , item)) in visible_items.into_iter().enumerate() {
+            for (idx , item) in visible_items.into_iter() {
                 {
                     let item_key = (key_fn.0)(&item);
-                    if i == 0 {
-                        rsx! {
-                            div {
-                                key: "{item_key}",
-                                class: "{item_class}",
-                                "data-index": "{idx}",
-                                "data-key": "{item_key}",
-                                onmounted: move |evt| {
-                                    spawn(async move {
-                                        if let Ok(rect) = evt.get_client_rect().await {
-                                            let h = rect.height();
-                                            if measured_item_height().is_none_or(|current| (current - h).abs() > 1.0)
-                                            {
-                                                measured_item_height.set(Some(h));
-                                            }
+                    rsx! {
+                        div {
+                            key: "{item_key}",
+                            class: "{item_class}",
+                            "data-index": "{idx}",
+                            "data-key": "{item_key}",
+                            onmounted: move |evt| {
+                                // Skip if already measured
+                                if measured_item_height.read().is_some() {
+                                    return;
+                                }
+                                spawn(async move {
+                                    if let Ok(rect) = evt.get_client_rect().await {
+                                        let h = rect.height();
+                                        if measured_item_height().is_none_or(|current| (current - h).abs() > 1.0)
+                                        {
+                                            measured_item_height.set(Some(h));
                                         }
-                                    });
-                                },
-                                {(render_item.0)(item, idx)}
-                            }
-                        }
-                    } else {
-                        rsx! {
-                            div {
-                                key: "{item_key}",
-                                class: "{item_class}",
-                                "data-index": "{idx}",
-                                "data-key": "{item_key}",
-                                {(render_item.0)(item, idx)}
-                            }
+                                    }
+                                });
+                            },
+                            {(render_item.0)(item, idx)}
                         }
                     }
                 }
@@ -642,7 +631,8 @@ fn GridContent<T: Clone + PartialEq + 'static>(
 async fn wait_for_layout() {
     let promise =
         js_sys_x::eval("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-            .unwrap()
+            .expect("eval for rAF promise should not fail")
             .unchecked_into::<js_sys_x::Promise>();
+
     let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
 }
