@@ -198,23 +198,6 @@ fn slice_visible_items<T: Clone>(items: &[T], layout: &GridLayout) -> Vec<(usize
     }
 }
 
-/// Calculate scroll position to bring an item into view
-fn scroll_position_for_key<T>(
-    key: &str,
-    items: &[T],
-    key_fn: &KeyFn<T>,
-    config: &VirtualGridConfig,
-    container_width: f64,
-) -> Option<f64> {
-    let index = items.iter().position(|item| (key_fn.0)(item) == key)?;
-    let columns = ((container_width + config.gap) / (config.item_width + config.gap))
-        .floor()
-        .max(1.0) as usize;
-    let row = index / columns;
-    let row_height = config.item_height + config.gap;
-    Some((row as f64) * row_height)
-}
-
 // =============================================================================
 // Public component - entry point
 // =============================================================================
@@ -235,9 +218,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
     /// Scroll target: Container (default) for own scrollable area, Window for body scrolling
     #[props(default)]
     scroll_target: ScrollTarget,
-    /// Key of item to scroll to on mount
-    #[props(default)]
-    initial_scroll_to: Option<String>,
 ) -> Element {
     match scroll_target {
         ScrollTarget::Container => rsx! {
@@ -248,7 +228,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
                 key_fn,
                 item_class,
                 container_class,
-                initial_scroll_to,
             }
         },
         ScrollTarget::Window => rsx! {
@@ -258,7 +237,6 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
                 render_item,
                 key_fn,
                 item_class,
-                initial_scroll_to,
             }
         },
     }
@@ -276,7 +254,6 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
     key_fn: KeyFn<T>,
     item_class: String,
     container_class: String,
-    initial_scroll_to: Option<String>,
 ) -> Element {
     let mut scroll_top = use_signal(|| 0.0_f64);
     let mut container_width = use_signal(|| 1000.0_f64);
@@ -345,29 +322,6 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
     );
     let visible_items = slice_visible_items(&items, &layout);
 
-    // Initial scroll handling
-    let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
-    {
-        let initial_scroll_to = initial_scroll_to.clone();
-        let key_fn = key_fn.clone();
-        let items = items.clone();
-        let eff_config = eff_config.clone();
-        let cw = container_width();
-
-        use_effect(move || {
-            if let Some(ref key) = initial_scroll_to {
-                if !initial_scroll_done.get() && cw > 0.0 {
-                    initial_scroll_done.set(true);
-                    if let Some(pos) =
-                        scroll_position_for_key(key, &items, &key_fn, &eff_config, cw)
-                    {
-                        scroll_top.set(pos);
-                    }
-                }
-            }
-        });
-    }
-
     let container_classes =
         format!("virtual-grid-container w-full overflow-y-auto {container_class}");
     let container_id_for_mount = container_id.clone();
@@ -399,8 +353,9 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
                 mounted_element.set(Some(evt.data()));
                 let container_id = container_id_for_mount.clone();
 
+                // Wait for layout to stabilize before measuring
                 spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+                    wait_for_layout().await;
 
                     let Some(window) = web_sys_x::window() else { return };
                     let Some(document) = window.document() else { return };
@@ -437,7 +392,6 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
     render_item: RenderFn<T>,
     key_fn: KeyFn<T>,
     item_class: String,
-    initial_scroll_to: Option<String>,
 ) -> Element {
     let mut scroll_top = use_signal(|| 0.0_f64);
     let mut container_width = use_signal(|| 1000.0_f64);
@@ -566,32 +520,6 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
     );
     let visible_items = slice_visible_items(&items, &layout);
 
-    // Initial scroll handling
-    let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
-    {
-        let initial_scroll_to = initial_scroll_to.clone();
-        let key_fn = key_fn.clone();
-        let items = items.clone();
-        let eff_config = eff_config.clone();
-        let cw = container_width();
-
-        use_effect(move || {
-            if let Some(ref key) = initial_scroll_to {
-                if !initial_scroll_done.get() && cw > 0.0 {
-                    initial_scroll_done.set(true);
-                    if let Some(pos) =
-                        scroll_position_for_key(key, &items, &key_fn, &eff_config, cw)
-                    {
-                        if let Some(window) = web_sys_x::window() {
-                            let page_y = element_offset_top().unwrap_or(0.0) + pos;
-                            window.scroll_to_with_x_and_y(0.0, page_y);
-                        }
-                    }
-                }
-            }
-        });
-    }
-
     let container_id_for_mount = container_id.clone();
 
     rsx! {
@@ -602,8 +530,9 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
             onmounted: move |_evt| {
                 let container_id = container_id_for_mount.clone();
 
+                // Wait for layout to stabilize before measuring
                 spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+                    wait_for_layout().await;
 
                     let Some(window) = web_sys_x::window() else { return };
                     let Some(document) = window.document() else { return };
@@ -703,4 +632,17 @@ fn GridContent<T: Clone + PartialEq + 'static>(
             style: "height: {layout.bottom_padding}px;",
         }
     }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Waits for two animation frames, allowing layout to stabilize after mount.
+async fn wait_for_layout() {
+    let promise =
+        js_sys_x::eval("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+            .unwrap()
+            .unchecked_into::<js_sys_x::Promise>();
+    let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
 }

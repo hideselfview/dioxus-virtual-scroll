@@ -30,22 +30,47 @@ test.describe('VirtualGrid', () => {
 
   test('changes visible items when scrolling', async ({ page }) => {
     await page.locator('input[type="number"]').fill('500');
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(500);
 
     const initialIndices = await page.locator('.virtual-grid-content > div[data-index]').evaluateAll(
       els => els.map(el => parseInt(el.dataset.index!, 10))
     );
     
+    // Debug: check content height and scroll position
+    const debug = await page.evaluate(() => {
+      const scrollY = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight;
+      const spacerTop = document.querySelector('.virtual-grid-spacer-top') as HTMLElement;
+      const spacerBottom = document.querySelector('.virtual-grid-spacer-bottom') as HTMLElement;
+      return {
+        scrollY,
+        docHeight,
+        topSpacerHeight: spacerTop?.style.height,
+        bottomSpacerHeight: spacerBottom?.style.height,
+      };
+    });
+    console.log('Before scroll:', debug);
+    
     await scrollTo(page, 3000);
+    
+    // Wait a bit more for scroll event to process
+    await page.waitForTimeout(500);
+    
+    const afterDebug = await page.evaluate(() => ({
+      scrollY: window.scrollY,
+      docHeight: document.documentElement.scrollHeight,
+      topSpacerHeight: (document.querySelector('.virtual-grid-spacer-top') as HTMLElement)?.style.height,
+    }));
+    console.log('After scroll:', afterDebug);
     
     const scrolledIndices = await page.locator('.virtual-grid-content > div[data-index]').evaluateAll(
       els => els.map(el => parseInt(el.dataset.index!, 10))
     );
     
-    expect(scrolledIndices[0]).toBeGreaterThan(initialIndices[0]);
-    
     console.log('Initial first index:', initialIndices[0]);
     console.log('After scroll first index:', scrolledIndices[0]);
+    
+    expect(scrolledIndices[0]).toBeGreaterThan(initialIndices[0]);
   });
 
   test('maintains reasonable DOM count while scrolling', async ({ page }) => {
@@ -300,37 +325,6 @@ test.describe('VirtualGrid', () => {
     expect(firstKey).toMatch(/^\d+$/);
     
     console.log(`Found ${count} items with data-key, first key: ${firstKey}`);
-  });
-
-  test('initial_scroll_to scrolls to specified item on remount', async ({ page }) => {
-    await page.locator('input[type="number"]').fill('200');
-    await page.waitForTimeout(300);
-
-    // Should be at top initially
-    let scrollY = await page.evaluate(() => window.scrollY);
-    expect(scrollY).toBeLessThan(50);
-
-    // Set scroll_to and remount
-    await page.locator('input[type="text"]').fill('100');
-    await page.getByRole('button', { name: 'Remount' }).click();
-    await page.waitForTimeout(500);
-
-    // Should have scrolled down
-    scrollY = await page.evaluate(() => window.scrollY);
-    expect(scrollY).toBeGreaterThan(500);
-
-    // Item 100 should be visible
-    const visibleKeys = await page.locator('.virtual-grid-content > div[data-key]').evaluateAll(
-      els => els.map(el => parseInt(el.getAttribute('data-key')!, 10))
-    );
-    const minKey = Math.min(...visibleKeys);
-    const maxKey = Math.max(...visibleKeys);
-    
-    // Item 100 should be in or near visible range
-    expect(100).toBeGreaterThanOrEqual(minKey - 10);
-    expect(100).toBeLessThanOrEqual(maxKey + 10);
-    
-    console.log(`scrollY: ${scrollY}, visible keys: ${minKey}-${maxKey}`);
   });
 
   test('cleanup - no memory leak on repeated mount/unmount', async ({ page }) => {

@@ -29,19 +29,8 @@ fn generate_albums(count: usize) -> Vec<Album> {
 fn App() -> Element {
     let mut album_count = use_signal(|| 200usize);
     let mut cycle = use_signal(|| 0u32);
-    let mut scroll_to_input = use_signal(String::new);
 
     let albums = generate_albums(album_count());
-
-    // Convert scroll_to input to Option<String> for the grid
-    let initial_scroll_to = {
-        let input = scroll_to_input();
-        if input.is_empty() {
-            None
-        } else {
-            Some(input)
-        }
-    };
 
     let config = VirtualGridConfig {
         item_width: 200.0,
@@ -98,16 +87,6 @@ fn App() -> Element {
                         },
                     }
                 }
-                label { style: "color: #888;",
-                    "Initial scroll to: "
-                    input {
-                        r#type: "text",
-                        value: "{scroll_to_input}",
-                        placeholder: "album id",
-                        style: "width: 80px; padding: 4px;",
-                        oninput: move |e| scroll_to_input.set(e.value()),
-                    }
-                }
                 button {
                     style: "padding: 4px 12px; cursor: pointer;",
                     onclick: move |_| cycle += 1,
@@ -126,7 +105,6 @@ fn App() -> Element {
                 render_item,
                 key_fn,
                 scroll_target: ScrollTarget::Window,
-                initial_scroll_to,
             }
         }
     }

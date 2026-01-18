@@ -77,3 +77,4 @@ In Dioxus desktop, heavy scrolling with concurrent activity (e.g., image loading
 ## License
 
 MIT OR Apache-2.0
+
