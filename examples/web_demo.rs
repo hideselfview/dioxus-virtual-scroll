@@ -27,7 +27,7 @@ fn generate_albums(count: usize) -> Vec<Album> {
 
 #[component]
 fn App() -> Element {
-    let mut album_count = use_signal(|| 200usize);
+    let mut album_count = use_signal(|| 2000usize);
     let mut cycle = use_signal(|| 0u32);
     let mut use_window_scroll = use_signal(|| true);
 
@@ -82,7 +82,7 @@ fn App() -> Element {
             h1 { style: "color: white; margin: 0 0 8px 0;", "VirtualGrid Demo" }
             div { style: "display: flex; gap: 16px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;",
                 label { style: "color: #888;",
-                    "Albums: "
+                    "Items: "
                     input {
                         r#type: "number",
                         value: "{album_count}",
@@ -94,29 +94,18 @@ fn App() -> Element {
                         },
                     }
                 }
-                label { style: "color: #888; display: flex; align-items: center; gap: 6px;",
-                    input {
-                        r#type: "checkbox",
-                        checked: use_window_scroll(),
+                label { style: "color: #888;",
+                    "Mode: "
+                    select {
+                        style: "padding: 4px;",
+                        value: if use_window_scroll() { "window" } else { "container" },
                         onchange: move |e| {
-                            use_window_scroll.set(e.checked());
+                            use_window_scroll.set(e.value() == "window");
                             cycle += 1;
                         },
+                        option { value: "window", "Window" }
+                        option { value: "container", "Container" }
                     }
-                    "Window scroll"
-                }
-                button {
-                    style: "padding: 4px 12px; cursor: pointer;",
-                    onclick: move |_| cycle += 1,
-                    "Remount"
-                }
-            }
-            p { style: "color: #666; font-size: 14px; margin: 0 0 16px 0;",
-                "{albums.len()} albums (cycle {cycle_val}) — "
-                if use_window_scroll() {
-                    "page scrolls"
-                } else {
-                    "container scrolls"
                 }
             }
         }
