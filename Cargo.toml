@@ -1,0 +1,21 @@
+[package]
+name = "dioxus-virtual-scroll"
+version = "0.1.0"
+edition = "2021"
+description = "Virtual scrolling grid component for Dioxus"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/dioxus-virtual-scroll"
+
+[dependencies]
+dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", default-features = false, features = ["signals", "html", "macro", "hooks"] }
+web-sys-x = { version = "0.3.83-alpha.1", features = ["Element", "HtmlElement", "DomRect", "Window", "Document", "ScrollToOptions", "ScrollBehavior", "AddEventListenerOptions", "ResizeObserver", "ResizeObserverEntry", "ResizeObserverSize"] }
+wasm-bindgen-x = "0.2.106-alpha.1"
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+# Desktop feature needed for examples
+dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["desktop"] }
+
+[[example]]
+name = "stress_test"
+required-features = []
