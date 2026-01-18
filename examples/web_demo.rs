@@ -55,13 +55,14 @@ fn App() -> Element {
             div {
                 "data-testid": "album-card",
                 style: "background: #2a2a4e; border-radius: 8px; overflow: hidden; height: 280px;",
-                div {
-                    style: "aspect-ratio: 1; background: #3a3a5e; display: flex; align-items: center; justify-content: center;",
+                div { style: "aspect-ratio: 1; background: #3a3a5e; display: flex; align-items: center; justify-content: center;",
                     span { style: "color: #666; font-size: 48px;", "🎵" }
                 }
                 div { style: "padding: 12px;",
                     h3 { style: "color: white; font-weight: bold; margin: 0;", "{album.title}" }
-                    p { style: "color: #888; font-size: 12px; margin: 4px 0 0 0;", "ID: {album.id}" }
+                    p { style: "color: #888; font-size: 12px; margin: 4px 0 0 0;",
+                        "ID: {album.id}"
+                    }
                 }
             }
         }
@@ -72,17 +73,17 @@ fn App() -> Element {
     let cycle_val = cycle();
 
     rsx! {
-        style { r#"
+        style {
+            r#"
             * {{ box-sizing: border-box; }}
             body {{ margin: 0; background: #1a1a2e; font-family: system-ui; }}
             .w-full {{ width: 100%; }}
             .overflow-y-auto {{ overflow-y: auto; }}
             .min-h-0 {{ min-height: 0; }}
-        "#}
+        "#
+        }
         div { style: "padding: 20px;",
-            h1 { style: "color: white; margin: 0 0 8px 0;",
-                "VirtualGrid Demo"
-            }
+            h1 { style: "color: white; margin: 0 0 8px 0;", "VirtualGrid Demo" }
             div { style: "display: flex; gap: 16px; margin-bottom: 16px; align-items: center;",
                 label { style: "color: #888;",
                     "Albums: "
@@ -94,7 +95,7 @@ fn App() -> Element {
                             if let Ok(n) = e.value().parse::<usize>() {
                                 album_count.set(n);
                             }
-                        }
+                        },
                     }
                 }
                 label { style: "color: #888;",
@@ -104,7 +105,7 @@ fn App() -> Element {
                         value: "{scroll_to_input}",
                         placeholder: "album id",
                         style: "width: 80px; padding: 4px;",
-                        oninput: move |e| scroll_to_input.set(e.value())
+                        oninput: move |e| scroll_to_input.set(e.value()),
                     }
                 }
                 button {

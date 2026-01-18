@@ -9,7 +9,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'cd .. && dx serve --example web_demo --port 8080',
+    command: 'cd .. && dx serve --example web_demo --port 8080 --platform web',
     port: 8080,
     timeout: 120000,
     reuseExistingServer: !process.env.CI,

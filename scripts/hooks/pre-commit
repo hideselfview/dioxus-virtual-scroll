@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -e
+
+TMPFILE=$(mktemp)
+trap "rm -f $TMPFILE" EXIT
+
+run_check() {
+    local name="$1"
+    shift
+    echo "Running $name..."
+    if "$@" > "$TMPFILE" 2>&1; then
+        return 0
+    else
+        echo ""
+        echo "❌ $name failed:"
+        cat "$TMPFILE"
+        return 1
+    fi
+}
+
+# Format checks
+run_check "cargo fmt" cargo fmt -- --check || {
+    echo "Run 'cargo fmt' to fix formatting"
+    exit 1
+}
+
+run_check "dx fmt" dx fmt --check || {
+    echo "Run 'dx fmt' to fix formatting"
+    exit 1
+}
+
+# Clippy
+run_check "clippy" cargo clippy -- -D warnings || {
+    echo "Fix the warnings above and try again"
+    exit 1
+}
+
+# Check library compiles
+run_check "cargo check (lib)" cargo check || {
+    echo "Fix the errors above and try again"
+    exit 1
+}
+
+# Playwright tests
+cd e2e
+run_check "playwright tests" npm test || {
+    echo "Fix the failing e2e tests and try again"
+    exit 1
+}
+cd ..
+
+echo "✅ All checks passed"
+exit 0

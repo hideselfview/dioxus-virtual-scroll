@@ -94,10 +94,8 @@ fn App() -> Element {
 
     let render_item = RenderFn(Rc::new(move |album: Album, _idx: usize| {
         rsx! {
-            div {
-                style: "background: #2a2a4e; border-radius: 8px; overflow: hidden; height: 280px;",
-                div {
-                    style: "aspect-ratio: 1; background: #3a3a5e; display: flex; align-items: center; justify-content: center;",
+            div { style: "background: #2a2a4e; border-radius: 8px; overflow: hidden; height: 280px;",
+                div { style: "aspect-ratio: 1; background: #3a3a5e; display: flex; align-items: center; justify-content: center;",
                     if let Some(url) = &album.cover_url {
                         img {
                             src: "{url}",
@@ -118,7 +116,8 @@ fn App() -> Element {
     let key_fn = KeyFn(Rc::new(|album: &Album| album.id.clone()));
 
     rsx! {
-        style { r#"
+        style {
+            r#"
             body {{ margin: 0; background: #1a1a2e; font-family: system-ui; }}
             /* VirtualGrid needs these Tailwind-like classes */
             .w-full {{ width: 100%; }}
@@ -126,11 +125,10 @@ fn App() -> Element {
             .min-h-0 {{ min-height: 0; }}
             /* Container needs height constraint for virtualization */
             .grid-container {{ flex: 1; min-height: 0; height: 100%; }}
-        "#}
+        "#
+        }
         div { style: "padding: 20px; height: 100vh; display: flex; flex-direction: column;",
-            h1 { style: "color: white; margin: 0 0 8px 0;",
-                "VirtualGrid IPC Stress Test"
-            }
+            h1 { style: "color: white; margin: 0 0 8px 0;", "VirtualGrid IPC Stress Test" }
             p { style: "color: #888; margin: 0 0 16px 0;",
                 "{ALBUM_COUNT} albums, images: {ENABLE_IMAGES}"
             }

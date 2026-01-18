@@ -1,0 +1,6 @@
+[application]
+name = "dioxus-virtual-scroll"
+default_platform = "web"
+
+[web.app]
+title = "VirtualGrid Demo"

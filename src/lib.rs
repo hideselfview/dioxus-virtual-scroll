@@ -404,8 +404,10 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
 
                     let Some(window) = web_sys_x::window() else { return };
                     let Some(document) = window.document() else { return };
-                    let Some(element) = document.get_element_by_id(&container_id) else { return };
+                    let Some(element) = document.get_element_by_id(&container_id) else {
 
+                        return
+                    };
                     let rect = element.get_bounding_client_rect();
                     container_width.set(rect.width());
                     container_height.set(rect.height());
@@ -605,15 +607,15 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
 
                     let Some(window) = web_sys_x::window() else { return };
                     let Some(document) = window.document() else { return };
-                    let Some(element) = document.get_element_by_id(&container_id) else { return };
+                    let Some(element) = document.get_element_by_id(&container_id) else {
 
+                        return
+                    };
                     let rect = element.get_bounding_client_rect();
                     let scroll_y = window.scroll_y().unwrap_or(0.0);
                     let page_offset = scroll_y + rect.top();
-
                     element_offset_top.set(Some(page_offset));
                     container_width.set(rect.width());
-
                     let initial_scroll = (scroll_y - page_offset).max(0.0);
                     scroll_top.set(initial_scroll);
                 });
@@ -656,10 +658,8 @@ fn GridContent<T: Clone + PartialEq + 'static>(
             style: "height: {layout.top_padding}px;",
         }
 
-        div {
-            class: "virtual-grid-content min-h-0",
-            style: "{grid_style}",
-            for (i, (idx, item)) in visible_items.into_iter().enumerate() {
+        div { class: "virtual-grid-content min-h-0", style: "{grid_style}",
+            for (i , (idx , item)) in visible_items.into_iter().enumerate() {
                 {
                     let item_key = (key_fn.0)(&item);
                     if i == 0 {
@@ -673,7 +673,8 @@ fn GridContent<T: Clone + PartialEq + 'static>(
                                     spawn(async move {
                                         if let Ok(rect) = evt.get_client_rect().await {
                                             let h = rect.height();
-                                            if measured_item_height().is_none_or(|current| (current - h).abs() > 1.0) {
+                                            if measured_item_height().is_none_or(|current| (current - h).abs() > 1.0)
+                                            {
                                                 measured_item_height.set(Some(h));
                                             }
                                         }

@@ -57,6 +57,19 @@ cargo run --example stress_test
 dx serve --example web_demo
 ```
 
+## Development
+
+```bash
+# Install git hooks (runs fmt, clippy, playwright on commit)
+./scripts/setup-hooks.sh
+
+# Install e2e test dependencies
+cd e2e && npm install && npx playwright install chromium
+
+# Run e2e tests manually
+cd e2e && npm test
+```
+
 ## Known Issues
 
 In Dioxus desktop, heavy scrolling with concurrent activity (e.g., image loading) can trigger IPC buffer exhaustion (`U8BufferEmpty` panic). See `examples/stress_test.rs` for reproduction.

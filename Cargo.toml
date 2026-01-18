@@ -13,7 +13,13 @@ wasm-bindgen-x = "0.2.106-alpha.1"
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
-dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["desktop", "web"] }
+dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["web"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["desktop"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [[example]]
 name = "stress_test"
