@@ -12,7 +12,10 @@ Early development. API will change.
 - **Scroll targets** - scroll within a container or use window scrolling
 - **Auto-measurement** - measures container and item dimensions via ResizeObserver
 
-List layout planned but not implemented.
+## Not Implemented
+
+- **List layout** - single column virtualized list
+- **Scroll handle** - programmatic seeking to specific items
 
 ## Usage
 
