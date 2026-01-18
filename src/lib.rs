@@ -75,8 +75,8 @@ impl<T> Clone for RenderFn<T> {
 }
 
 impl<T> PartialEq for RenderFn<T> {
-    fn eq(&self, _other: &Self) -> bool {
-        false // Conservative: assume render function may have changed
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -90,8 +90,8 @@ impl<T> Clone for KeyFn<T> {
 }
 
 impl<T> PartialEq for KeyFn<T> {
-    fn eq(&self, _other: &Self) -> bool {
-        false // Conservative: assume key function may have changed
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
