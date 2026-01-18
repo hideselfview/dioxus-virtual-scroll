@@ -1,6 +1,6 @@
 # dioxus-virtual-scroll
 
-Virtual scrolling for Dioxus.
+Virtual scrolling for Dioxus. [Demo](https://hideselfview.github.io/dioxus-virtual-scroll/demo)
 
 https://github.com/user-attachments/assets/c85c43f8-efd9-41de-9361-a030e36621bd
 
