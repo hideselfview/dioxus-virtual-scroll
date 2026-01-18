@@ -164,6 +164,58 @@ impl GridLayout {
 }
 
 // =============================================================================
+// Shared helpers
+// =============================================================================
+
+/// Generate a unique container ID for this grid instance
+fn use_container_id() -> String {
+    use_hook(|| {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        format!("virtual-grid-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
+    })
+}
+
+/// Compute effective config with measured item height override
+fn effective_config(config: &VirtualGridConfig, measured_height: Option<f64>) -> VirtualGridConfig {
+    let mut cfg = config.clone();
+    if let Some(h) = measured_height {
+        cfg.item_height = h;
+    }
+    cfg
+}
+
+/// Slice items to only those visible in the current viewport
+fn slice_visible_items<T: Clone>(items: &[T], layout: &GridLayout) -> Vec<(usize, T)> {
+    if layout.start_idx < items.len() {
+        items[layout.start_idx..layout.end_idx]
+            .iter()
+            .enumerate()
+            .map(|(i, item)| (layout.start_idx + i, item.clone()))
+            .collect()
+    } else {
+        vec![]
+    }
+}
+
+/// Calculate scroll position to bring an item into view
+fn scroll_position_for_key<T>(
+    key: &str,
+    items: &[T],
+    key_fn: &KeyFn<T>,
+    config: &VirtualGridConfig,
+    container_width: f64,
+) -> Option<f64> {
+    let index = items.iter().position(|item| (key_fn.0)(item) == key)?;
+    let columns = ((container_width + config.gap) / (config.item_width + config.gap))
+        .floor()
+        .max(1.0) as usize;
+    let row = index / columns;
+    let row_height = config.item_height + config.gap;
+    Some((row as f64) * row_height)
+}
+
+// =============================================================================
 // Public component - entry point
 // =============================================================================
 
@@ -231,14 +283,8 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
     let mut container_height = use_signal(|| 800.0_f64);
     let measured_item_height: Signal<Option<f64>> = use_signal(|| None);
     let mut mounted_element: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
-
     let scroll_query_pending = use_hook(|| Rc::new(std::cell::Cell::new(false)));
-
-    let container_id = use_hook(|| {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        format!("virtual-grid-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
-    });
+    let container_id = use_container_id();
 
     // ResizeObserver for container dimensions
     let resize_observer_handle =
@@ -289,31 +335,15 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
     }
 
     // Compute layout
-    let effective_config = {
-        let mut cfg = config.clone();
-        if let Some(h) = measured_item_height() {
-            cfg.item_height = h;
-        }
-        cfg
-    };
-
+    let eff_config = effective_config(&config, measured_item_height());
     let layout = GridLayout::calculate(
         items.len(),
-        &effective_config,
+        &eff_config,
         container_width(),
         container_height(),
         scroll_top(),
     );
-
-    let visible_items: Vec<(usize, T)> = if layout.start_idx < items.len() {
-        items[layout.start_idx..layout.end_idx]
-            .iter()
-            .enumerate()
-            .map(|(i, item)| (layout.start_idx + i, item.clone()))
-            .collect()
-    } else {
-        vec![]
-    };
+    let visible_items = slice_visible_items(&items, &layout);
 
     // Initial scroll handling
     let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
@@ -321,21 +351,17 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
         let initial_scroll_to = initial_scroll_to.clone();
         let key_fn = key_fn.clone();
         let items = items.clone();
-        let effective_config = effective_config.clone();
+        let eff_config = eff_config.clone();
         let cw = container_width();
 
         use_effect(move || {
             if let Some(ref key) = initial_scroll_to {
                 if !initial_scroll_done.get() && cw > 0.0 {
                     initial_scroll_done.set(true);
-                    if let Some(index) = items.iter().position(|item| (key_fn.0)(item) == *key) {
-                        let columns = ((cw + effective_config.gap)
-                            / (effective_config.item_width + effective_config.gap))
-                            .floor()
-                            .max(1.0) as usize;
-                        let row = index / columns;
-                        let row_height = effective_config.item_height + effective_config.gap;
-                        scroll_top.set((row as f64) * row_height);
+                    if let Some(pos) =
+                        scroll_position_for_key(key, &items, &key_fn, &eff_config, cw)
+                    {
+                        scroll_top.set(pos);
                     }
                 }
             }
@@ -388,7 +414,7 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
             GridContent {
                 layout,
                 visible_items,
-                config: effective_config,
+                config: eff_config,
                 item_class,
                 render_item,
                 key_fn,
@@ -416,12 +442,7 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
     let mut container_height = use_signal(|| 800.0_f64);
     let measured_item_height: Signal<Option<f64>> = use_signal(|| None);
     let mut element_offset_top: Signal<Option<f64>> = use_signal(|| None);
-
-    let container_id = use_hook(|| {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        format!("virtual-grid-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
-    });
+    let container_id = use_container_id();
 
     // Window scroll/resize listeners
     let window_listeners_handle =
@@ -533,31 +554,15 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
     }
 
     // Compute layout
-    let effective_config = {
-        let mut cfg = config.clone();
-        if let Some(h) = measured_item_height() {
-            cfg.item_height = h;
-        }
-        cfg
-    };
-
+    let eff_config = effective_config(&config, measured_item_height());
     let layout = GridLayout::calculate(
         items.len(),
-        &effective_config,
+        &eff_config,
         container_width(),
         container_height(),
         scroll_top(),
     );
-
-    let visible_items: Vec<(usize, T)> = if layout.start_idx < items.len() {
-        items[layout.start_idx..layout.end_idx]
-            .iter()
-            .enumerate()
-            .map(|(i, item)| (layout.start_idx + i, item.clone()))
-            .collect()
-    } else {
-        vec![]
-    };
+    let visible_items = slice_visible_items(&items, &layout);
 
     // Initial scroll handling
     let initial_scroll_done = use_hook(|| std::cell::Cell::new(false));
@@ -565,24 +570,18 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
         let initial_scroll_to = initial_scroll_to.clone();
         let key_fn = key_fn.clone();
         let items = items.clone();
-        let effective_config = effective_config.clone();
+        let eff_config = eff_config.clone();
         let cw = container_width();
 
         use_effect(move || {
             if let Some(ref key) = initial_scroll_to {
                 if !initial_scroll_done.get() && cw > 0.0 {
                     initial_scroll_done.set(true);
-                    if let Some(index) = items.iter().position(|item| (key_fn.0)(item) == *key) {
-                        let columns = ((cw + effective_config.gap)
-                            / (effective_config.item_width + effective_config.gap))
-                            .floor()
-                            .max(1.0) as usize;
-                        let row = index / columns;
-                        let row_height = effective_config.item_height + effective_config.gap;
-                        let target_scroll = (row as f64) * row_height;
-
+                    if let Some(pos) =
+                        scroll_position_for_key(key, &items, &key_fn, &eff_config, cw)
+                    {
                         if let Some(window) = web_sys_x::window() {
-                            let page_y = element_offset_top().unwrap_or(0.0) + target_scroll;
+                            let page_y = element_offset_top().unwrap_or(0.0) + pos;
                             window.scroll_to_with_x_and_y(0.0, page_y);
                         }
                     }
@@ -622,7 +621,7 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
             GridContent {
                 layout,
                 visible_items,
-                config: effective_config,
+                config: eff_config,
                 item_class,
                 render_item,
                 key_fn,
