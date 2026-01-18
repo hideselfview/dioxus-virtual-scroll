@@ -31,8 +31,8 @@ impl Drop for ResizeObserverCleanup {
 struct WindowListenersCleanup {
     scroll_callback: Closure<dyn FnMut()>,
     resize_callback: Closure<dyn FnMut()>,
-    #[allow(dead_code)] // Prevent raf_callback from being dropped
-    raf_callback: Rc<Closure<dyn FnMut()>>,
+    /// Stored to prevent the closure from being dropped (must outlive the event listeners)
+    _raf_callback: Rc<Closure<dyn FnMut()>>,
 }
 
 impl Drop for WindowListenersCleanup {
@@ -321,7 +321,7 @@ fn use_window_scroll_listeners(
         *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
             scroll_callback: scroll_closure,
             resize_callback: resize_closure,
-            raf_callback,
+            _raf_callback: raf_callback,
         });
     });
 }
