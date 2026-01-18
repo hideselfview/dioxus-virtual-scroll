@@ -53,8 +53,6 @@
     .link-card:hover { background: #3a3a5e; }
     .link-card h3 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.1rem; }
     .link-card p { margin: 0; font-size: 0.9rem; color: #888; }
-    .examples { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 600px) { .examples { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -69,15 +67,10 @@
     <li><strong>Efficient updates</strong> with ResizeObserver and rAF-throttled scroll handling</li>
   </ul>
 
-  <h2>Examples</h2>
-  <div class="examples">
-    <a class="link-card" href="./container_demo/">
-      <h3>Container Scroll</h3>
-      <p>Grid with its own scrollable container. Page doesn't scroll.</p>
-    </a>
-    <a class="link-card" href="./window_demo/">
-      <h3>Window Scroll</h3>
-      <p>Grid uses browser window scrolling. Good for full-page layouts.</p>
+  <div class="links">
+    <a class="link-card" href="./demo/">
+      <h3>Live Demo</h3>
+      <p>Interactive demo with toggle between container and window scroll modes.</p>
     </a>
   </div>
 

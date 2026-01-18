@@ -1,6 +1,6 @@
-//! Window scroll demo - grid uses browser window scrolling
+//! Web demo with toggle between scroll modes
 //!
-//! Run with: dx serve --example window_demo
+//! Run with: dx serve --example web_demo
 
 use dioxus::prelude::*;
 use dioxus_virtual_scroll::{KeyFn, RenderFn, ScrollTarget, VirtualGrid, VirtualGridConfig};
@@ -29,6 +29,7 @@ fn generate_albums(count: usize) -> Vec<Album> {
 fn App() -> Element {
     let mut album_count = use_signal(|| 200usize);
     let mut cycle = use_signal(|| 0u32);
+    let mut use_window_scroll = use_signal(|| true);
 
     let albums = generate_albums(album_count());
 
@@ -45,7 +46,7 @@ fn App() -> Element {
                 "data-testid": "album-card",
                 style: "background: #2a2a4e; border-radius: 8px; overflow: hidden; height: 280px;",
                 div { style: "aspect-ratio: 1; background: #3a3a5e; display: flex; align-items: center; justify-content: center;",
-                    span { style: "color: #666; font-size: 48px;", "🎵" }
+                    span { style: "color: #555; font-size: 32px;", "{album.id}" }
                 }
                 div { style: "padding: 12px;",
                     h3 { style: "color: white; font-weight: bold; margin: 0;", "{album.title}" }
@@ -60,6 +61,11 @@ fn App() -> Element {
     let key_fn = KeyFn(Rc::new(|album: &Album| album.id.clone()));
 
     let cycle_val = cycle();
+    let scroll_target = if use_window_scroll() {
+        ScrollTarget::Window
+    } else {
+        ScrollTarget::Container
+    };
 
     rsx! {
         style {
@@ -69,11 +75,12 @@ fn App() -> Element {
             .w-full {{ width: 100%; }}
             .overflow-y-auto {{ overflow-y: auto; }}
             .min-h-0 {{ min-height: 0; }}
+            .h-\[calc\(100vh-12rem\)\] {{ height: calc(100vh - 12rem); }}
         "#
         }
         div { style: "padding: 20px;",
             h1 { style: "color: white; margin: 0 0 8px 0;", "VirtualGrid Demo" }
-            div { style: "display: flex; gap: 16px; margin-bottom: 16px; align-items: center;",
+            div { style: "display: flex; gap: 16px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;",
                 label { style: "color: #888;",
                     "Albums: "
                     input {
@@ -87,6 +94,17 @@ fn App() -> Element {
                         },
                     }
                 }
+                label { style: "color: #888; display: flex; align-items: center; gap: 6px;",
+                    input {
+                        r#type: "checkbox",
+                        checked: use_window_scroll(),
+                        onchange: move |e| {
+                            use_window_scroll.set(e.checked());
+                            cycle += 1;
+                        },
+                    }
+                    "Window scroll"
+                }
                 button {
                     style: "padding: 4px 12px; cursor: pointer;",
                     onclick: move |_| cycle += 1,
@@ -94,17 +112,22 @@ fn App() -> Element {
                 }
             }
             p { style: "color: #666; font-size: 14px; margin: 0 0 16px 0;",
-                "{albums.len()} albums loaded (cycle {cycle_val})"
+                "{albums.len()} albums (cycle {cycle_val}) — "
+                if use_window_scroll() {
+                    "page scrolls"
+                } else {
+                    "container scrolls"
+                }
             }
         }
-        div { style: "height: calc(100vh - 150px); padding: 0 20px 20px 20px;",
+        div { style: "padding: 0 20px 20px 20px;",
             VirtualGrid {
                 key: "{cycle_val}",
                 items: albums,
                 config,
                 render_item,
                 key_fn,
-                scroll_target: ScrollTarget::Window,
+                scroll_target,
             }
         }
     }
