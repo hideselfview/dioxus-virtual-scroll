@@ -61,7 +61,7 @@ jobs:
       - name: Prepare docs
         run: |
           mkdir -p docs/demo
-          cp -r dist/* docs/demo/
+          cp -r target/dx/web_demo/release/web/public/* docs/demo/
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:
