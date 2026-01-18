@@ -1,6 +1,6 @@
-//! Web demo for Playwright testing
+//! Window scroll demo - grid uses browser window scrolling
 //!
-//! Run with: dx serve --example web_demo
+//! Run with: dx serve --example window_demo
 
 use dioxus::prelude::*;
 use dioxus_virtual_scroll::{KeyFn, RenderFn, ScrollTarget, VirtualGrid, VirtualGridConfig};

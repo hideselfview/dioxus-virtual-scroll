@@ -26,4 +26,7 @@ getrandom = { version = "0.2", features = ["js"] }
 name = "stress_test"
 
 [[example]]
-name = "web_demo"
+name = "window_demo"
+
+[[example]]
+name = "container_demo"

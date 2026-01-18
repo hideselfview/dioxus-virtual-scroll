@@ -16,7 +16,8 @@
       line-height: 1.6;
     }
     h1 { color: #fff; margin-bottom: 0.5rem; }
-    p { color: #888; }
+    h2 { color: #fff; margin-top: 2.5rem; margin-bottom: 1rem; }
+    p { color: #aaa; }
     a { color: #6ea8fe; }
     code {
       background: #2a2a4e;
@@ -24,6 +25,18 @@
       border-radius: 4px;
       font-size: 0.9em;
     }
+    pre {
+      background: #2a2a4e;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    pre code {
+      padding: 0;
+      background: none;
+    }
+    ul { color: #aaa; padding-left: 1.5rem; }
+    li { margin: 0.5rem 0; }
     .links {
       margin-top: 2rem;
       display: flex;
@@ -38,30 +51,71 @@
       transition: background 0.2s;
     }
     .link-card:hover { background: #3a3a5e; }
-    .link-card h2 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.2rem; }
-    .link-card p { margin: 0; font-size: 0.9rem; }
+    .link-card h3 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.1rem; }
+    .link-card p { margin: 0; font-size: 0.9rem; color: #888; }
+    .examples { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 600px) { .examples { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <h1>dioxus-virtual-scroll</h1>
-  <p>Virtual scrolling grid component for Dioxus. Renders only visible items.</p>
-  
-  <div class="links">
-    <a class="link-card" href="./web_demo.html">
-      <h2>Web Demo</h2>
-      <p>Interactive demo with configurable album count. Test scrolling and resize behavior.</p>
+  <p>A virtual scrolling grid component for <a href="https://dioxuslabs.com">Dioxus</a>. Renders only visible items plus a buffer, using spacer elements to maintain scroll height.</p>
+
+  <h2>Features</h2>
+  <ul>
+    <li><strong>Grid layout</strong> with auto-calculated columns based on container width</li>
+    <li><strong>Two scroll modes:</strong> container scroll (grid has its own scrollbar) or window scroll (uses browser scrolling)</li>
+    <li><strong>Automatic measurement</strong> of item heights for accurate layout</li>
+    <li><strong>Efficient updates</strong> with ResizeObserver and rAF-throttled scroll handling</li>
+  </ul>
+
+  <h2>Examples</h2>
+  <div class="examples">
+    <a class="link-card" href="./container_demo/">
+      <h3>Container Scroll</h3>
+      <p>Grid with its own scrollable container. Page doesn't scroll.</p>
     </a>
-    <a class="link-card" href="https://github.com/hideselfview/dioxus-virtual-scroll">
-      <h2>GitHub</h2>
-      <p>Source code, issues, and documentation.</p>
+    <a class="link-card" href="./window_demo/">
+      <h3>Window Scroll</h3>
+      <p>Grid uses browser window scrolling. Good for full-page layouts.</p>
     </a>
   </div>
 
-  <h2 style="margin-top: 3rem;">Quick Start</h2>
-  <pre style="background: #2a2a4e; padding: 1rem; border-radius: 8px; overflow-x: auto;"><code>cargo add dioxus-virtual-scroll</code></pre>
+  <h2>Quick Start</h2>
+  <pre><code>cargo add dioxus-virtual-scroll</code></pre>
 
-  <p style="margin-top: 2rem; font-size: 0.85rem; color: #666;">
-    Grid layout only. List layout planned. See README for known issues with Dioxus desktop.
+  <pre><code>use dioxus_virtual_scroll::{VirtualGrid, VirtualGridConfig, RenderFn, KeyFn};
+
+let config = VirtualGridConfig {
+    item_width: 200.0,
+    item_height: 280.0,
+    buffer_rows: 2,
+    gap: 16.0,
+};
+
+rsx! {
+    VirtualGrid {
+        items: albums,
+        config,
+        render_item: RenderFn(Rc::new(|album, idx| rsx! { ... })),
+        key_fn: KeyFn(Rc::new(|album| album.id.clone())),
+    }
+}</code></pre>
+
+  <h2>Links</h2>
+  <div class="links">
+    <a class="link-card" href="https://github.com/hideselfview/dioxus-virtual-scroll">
+      <h3>GitHub</h3>
+      <p>Source code, issues, and documentation.</p>
+    </a>
+    <a class="link-card" href="https://crates.io/crates/dioxus-virtual-scroll">
+      <h3>crates.io</h3>
+      <p>Rust package registry.</p>
+    </a>
+  </div>
+
+  <p style="margin-top: 3rem; font-size: 0.85rem; color: #555;">
+    Grid layout only. List layout planned.
   </p>
 </body>
 </html>

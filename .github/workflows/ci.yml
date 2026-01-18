@@ -54,13 +54,18 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - run: cargo install dioxus-cli
-      - name: Build web demo
-        run: dx build --example web_demo --release
-      - name: Prepare docs
+      - name: Build window demo
+        run: dx build --example window_demo --release
+      - name: Copy window demo to docs
         run: |
-          mkdir -p docs
-          cp -r dist/* docs/ || true
-          cp docs/index.html docs/web_demo.html || true
+          mkdir -p docs/window_demo
+          cp -r dist/* docs/window_demo/
+      - name: Build container demo
+        run: dx build --example container_demo --release
+      - name: Copy container demo to docs
+        run: |
+          mkdir -p docs/container_demo
+          cp -r dist/* docs/container_demo/
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:
