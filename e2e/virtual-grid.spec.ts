@@ -1,20 +1,55 @@
 import { test, expect, Page } from '@playwright/test';
 
+type ScrollMode = 'window' | 'container';
+
 async function countGridItems(page: Page): Promise<number> {
   return await page.locator('.virtual-grid-content > div').count();
 }
 
-async function scrollTo(page: Page, y: number) {
-  await page.evaluate((scrollY) => window.scrollTo(0, scrollY), y);
-  await page.waitForTimeout(200);
+async function scrollTo(page: Page, y: number, mode: ScrollMode, waitMs = 200) {
+  if (mode === 'window') {
+    await page.evaluate((scrollY) => window.scrollTo(0, scrollY), y);
+  } else {
+    await page.evaluate((scrollY) => {
+      const container = document.querySelector('.virtual-grid-container');
+      if (container) container.scrollTop = scrollY;
+    }, y);
+  }
+  await page.waitForTimeout(waitMs);
 }
 
-test.describe('VirtualGrid', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+async function getScrollY(page: Page, mode: ScrollMode): Promise<number> {
+  if (mode === 'window') {
+    return await page.evaluate(() => window.scrollY);
+  } else {
+    return await page.evaluate(() => {
+      const container = document.querySelector('.virtual-grid-container');
+      return container ? container.scrollTop : 0;
+    });
+  }
+}
+
+async function setupMode(page: Page, mode: ScrollMode) {
+  await page.goto('/');
+  await page.waitForSelector('.virtual-grid-content', { timeout: 30000 });
+  
+  // Switch mode if needed
+  const currentMode = await page.locator('select').inputValue();
+  if (currentMode !== mode) {
+    await page.locator('select').selectOption(mode);
     await page.waitForSelector('.virtual-grid-content', { timeout: 30000 });
-    await page.waitForTimeout(500);
-  });
+  }
+  
+  await page.waitForTimeout(500);
+}
+
+const modes: ScrollMode[] = ['window', 'container'];
+
+for (const mode of modes) {
+  test.describe(`VirtualGrid (${mode} scroll)`, () => {
+    test.beforeEach(async ({ page }) => {
+      await setupMode(page, mode);
+    });
 
   test('limits DOM elements via virtual scrolling', async ({ page }) => {
     await page.locator('input[type="number"]').fill('500');
@@ -37,9 +72,10 @@ test.describe('VirtualGrid', () => {
     );
     
     // Debug: check content height and scroll position
-    const debug = await page.evaluate(() => {
-      const scrollY = window.scrollY;
-      const docHeight = document.documentElement.scrollHeight;
+    const debug = await page.evaluate((m) => {
+      const container = document.querySelector('.virtual-grid-container');
+      const scrollY = m === 'window' ? window.scrollY : (container?.scrollTop ?? 0);
+      const docHeight = m === 'window' ? document.documentElement.scrollHeight : (container?.scrollHeight ?? 0);
       const spacerTop = document.querySelector('.virtual-grid-spacer-top') as HTMLElement;
       const spacerBottom = document.querySelector('.virtual-grid-spacer-bottom') as HTMLElement;
       return {
@@ -48,19 +84,22 @@ test.describe('VirtualGrid', () => {
         topSpacerHeight: spacerTop?.style.height,
         bottomSpacerHeight: spacerBottom?.style.height,
       };
-    });
+    }, mode);
     console.log('Before scroll:', debug);
     
-    await scrollTo(page, 3000);
+    await scrollTo(page, 3000, mode);
     
     // Wait a bit more for scroll event to process
     await page.waitForTimeout(500);
     
-    const afterDebug = await page.evaluate(() => ({
-      scrollY: window.scrollY,
-      docHeight: document.documentElement.scrollHeight,
-      topSpacerHeight: (document.querySelector('.virtual-grid-spacer-top') as HTMLElement)?.style.height,
-    }));
+    const afterDebug = await page.evaluate((m) => {
+      const container = document.querySelector('.virtual-grid-container');
+      return {
+        scrollY: m === 'window' ? window.scrollY : (container?.scrollTop ?? 0),
+        docHeight: m === 'window' ? document.documentElement.scrollHeight : (container?.scrollHeight ?? 0),
+        topSpacerHeight: (document.querySelector('.virtual-grid-spacer-top') as HTMLElement)?.style.height,
+      };
+    }, mode);
     console.log('After scroll:', afterDebug);
     
     const scrolledIndices = await page.locator('.virtual-grid-content > div[data-index]').evaluateAll(
@@ -80,7 +119,7 @@ test.describe('VirtualGrid', () => {
     const counts: number[] = [];
     
     for (let y = 0; y <= 5000; y += 1000) {
-      await scrollTo(page, y);
+      await scrollTo(page, y, mode);
       const count = await countGridItems(page);
       counts.push(count);
     }
@@ -103,12 +142,13 @@ test.describe('VirtualGrid', () => {
     const items = page.locator('.virtual-grid-content > div[data-index]');
 
     // Measure layout constants at scroll=0
-    const layoutInfo = await page.evaluate(() => {
+    const layoutInfo = await page.evaluate((m) => {
       const container = document.querySelector('.virtual-grid-container')!;
       const gridItems = document.querySelectorAll('.virtual-grid-content > div[data-index]');
       
       const containerRect = container.getBoundingClientRect();
-      const containerPageOffset = containerRect.top + window.scrollY;
+      // For window scroll, offset is relative to page; for container scroll, it's 0 (relative to container)
+      const containerPageOffset = m === 'window' ? containerRect.top + window.scrollY : 0;
       
       const itemRects = Array.from(gridItems).slice(0, 20).map(el => el.getBoundingClientRect());
       const uniqueYs = [...new Set(itemRects.map(r => Math.round(r.y)))].sort((a, b) => a - b);
@@ -117,8 +157,11 @@ test.describe('VirtualGrid', () => {
       const firstRowY = itemRects[0]?.y ?? 0;
       const columns = itemRects.filter(r => Math.abs(r.y - firstRowY) < 5).length;
       
-      return { containerPageOffset, rowHeight, columns };
-    });
+      // For container mode, we need the container's top to calculate expected positions
+      const containerTop = containerRect.top;
+      
+      return { containerPageOffset, rowHeight, columns, containerTop };
+    }, mode);
 
     console.log(`Layout: containerOffset=${layoutInfo.containerPageOffset}, rowHeight=${layoutInfo.rowHeight}, columns=${layoutInfo.columns}`);
 
@@ -127,8 +170,8 @@ test.describe('VirtualGrid', () => {
 
     // Scroll in 20px increments
     for (let scrollY = 0; scrollY <= 5000; scrollY += 20) {
-      await page.evaluate(y => window.scrollTo(0, y), scrollY);
-      await page.waitForTimeout(50);
+      await scrollTo(page, scrollY, mode, 20);
+      await page.waitForTimeout(30);
 
       const currentData = await items.evaluateAll(els => 
         els.map(el => ({
@@ -162,9 +205,12 @@ test.describe('VirtualGrid', () => {
       }
 
       // Every item's absolute position should match expected based on its row
+      // For container mode, positions are relative to viewport, so we add containerTop
       for (const { index, y: actualY } of currentData) {
         const row = Math.floor(index / layoutInfo.columns);
-        const expectedY = layoutInfo.containerPageOffset + (row * layoutInfo.rowHeight) - scrollY;
+        const expectedY = mode === 'window'
+          ? layoutInfo.containerPageOffset + (row * layoutInfo.rowHeight) - scrollY
+          : layoutInfo.containerTop + (row * layoutInfo.rowHeight) - scrollY;
         const error = Math.abs(actualY - expectedY);
         
         expect(
@@ -199,7 +245,7 @@ test.describe('VirtualGrid', () => {
     });
 
     for (let y = 0; y <= 8000; y += 200) {
-      await page.evaluate(scrollY => window.scrollTo(0, scrollY), y);
+      await scrollTo(page, y, mode);
       await page.waitForTimeout(30);
     }
 
@@ -370,4 +416,5 @@ test.describe('VirtualGrid', () => {
     // Threshold of 5KB per cycle catches real leaks while allowing noise
     expect(growthPerCycle, 'Memory growing linearly - leak detected!').toBeLessThan(0.005);
   });
-});
+  });
+}
