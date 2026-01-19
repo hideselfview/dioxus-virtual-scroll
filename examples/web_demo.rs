@@ -61,10 +61,10 @@ fn App() -> Element {
     let key_fn = KeyFn(Rc::new(|album: &Album| album.id.clone()));
 
     let cycle_val = cycle();
-    let scroll_target = if use_window_scroll() {
-        ScrollTarget::Window
+    let (scroll_target, container_style) = if use_window_scroll() {
+        (ScrollTarget::Window, "")
     } else {
-        ScrollTarget::Container
+        (ScrollTarget::Container, "height: calc(100vh - 8rem);")
     };
 
     rsx! {
@@ -72,10 +72,6 @@ fn App() -> Element {
             r#"
             * {{ box-sizing: border-box; }}
             body {{ margin: 0; background: #1a1a2e; font-family: system-ui; }}
-            .w-full {{ width: 100%; }}
-            .overflow-y-auto {{ overflow-y: auto; }}
-            .min-h-0 {{ min-height: 0; }}
-            .h-\[calc\(100vh-12rem\)\] {{ height: calc(100vh - 12rem); }}
         "#
         }
         div { style: "padding: 20px;",
@@ -122,6 +118,7 @@ fn App() -> Element {
                 render_item,
                 key_fn,
                 scroll_target,
+                container_style,
             }
         }
     }

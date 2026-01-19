@@ -348,10 +348,14 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
     /// Function to extract a stable key from each item
     key_fn: KeyFn<T>,
     #[props(default = "grid-item".to_string())] item_class: String,
-    /// Container class - must include height constraint for virtual scrolling to work
+    /// Container class - should include height constraint for virtual scrolling to work
     /// (ignored when scroll_target is Window)
-    #[props(default = "h-[calc(100vh-12rem)]".to_string())]
+    #[props(default)]
     container_class: String,
+    /// Inline style for the container - useful for setting height constraints
+    /// (ignored when scroll_target is Window)
+    #[props(default)]
+    container_style: String,
     /// Scroll target: Container (default) for own scrollable area, Window for body scrolling
     #[props(default)]
     scroll_target: ScrollTarget,
@@ -365,6 +369,7 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
                 key_fn,
                 item_class,
                 container_class,
+                container_style,
             }
         },
         ScrollTarget::Window => rsx! {
@@ -391,6 +396,7 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
     key_fn: KeyFn<T>,
     item_class: String,
     container_class: String,
+    container_style: String,
 ) -> Element {
     let mut scroll_top = use_signal(|| 0.0_f64);
     let mut container_width = use_signal(|| 1000.0_f64);
@@ -416,15 +422,24 @@ fn ContainerScrollGrid<T: Clone + PartialEq + 'static>(
         scroll_top(),
     );
 
-    let container_classes =
-        format!("virtual-grid-container w-full overflow-y-auto {container_class}");
+    let container_classes = if container_class.is_empty() {
+        "virtual-grid-container".to_string()
+    } else {
+        format!("virtual-grid-container {container_class}")
+    };
+    let base_style = "width: 100%; overflow-y: auto; overflow-anchor: none;";
+    let full_style = if container_style.is_empty() {
+        base_style.to_string()
+    } else {
+        format!("{base_style} {container_style}")
+    };
     let container_id_for_mount = container_id.clone();
 
     rsx! {
         div {
             id: "{container_id}",
             class: "{container_classes}",
-            style: "overflow-anchor: none;",
+            style: "{full_style}",
             onscroll: move |_evt| {
                 if scroll_query_pending.get() {
                     return;
@@ -512,8 +527,8 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
     rsx! {
         div {
             id: "{container_id}",
-            class: "virtual-grid-container w-full",
-            style: "overflow-anchor: none;",
+            class: "virtual-grid-container",
+            style: "width: 100%; overflow-anchor: none;",
             onmounted: move |_evt| {
                 let container_id = container_id_for_mount.clone();
 
@@ -577,7 +592,7 @@ fn GridContent<T: Clone + PartialEq + 'static>(
             style: "height: {layout.top_padding}px;",
         }
 
-        div { class: "virtual-grid-content min-h-0", style: "{grid_style}",
+        div { class: "virtual-grid-content", style: "min-height: 0; {grid_style}",
             for (i , idx) in (layout.start_idx..layout.end_idx).enumerate() {
                 {
                     let item = items[idx].clone();

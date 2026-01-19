@@ -121,12 +121,6 @@ fn App() -> Element {
         style {
             r#"
             body {{ margin: 0; background: #1a1a2e; font-family: system-ui; }}
-            /* VirtualGrid needs these Tailwind-like classes */
-            .w-full {{ width: 100%; }}
-            .overflow-y-auto {{ overflow-y: auto; }}
-            .min-h-0 {{ min-height: 0; }}
-            /* Container needs height constraint for virtualization */
-            .grid-container {{ flex: 1; min-height: 0; height: 100%; }}
         "#
         }
         div { style: "padding: 20px; height: 100vh; display: flex; flex-direction: column;",
@@ -142,7 +136,7 @@ fn App() -> Element {
                 config,
                 render_item,
                 key_fn,
-                container_class: "grid-container",
+                container_style: "flex: 1; min-height: 0; height: 100%;",
             }
         }
     }
