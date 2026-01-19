@@ -592,7 +592,9 @@ fn GridContent<T: Clone + PartialEq + 'static>(
             style: "height: {layout.top_padding}px;",
         }
 
-        div { class: "virtual-grid-content", style: "min-height: 0; {grid_style}",
+        div {
+            class: "virtual-grid-content",
+            style: "min-height: 0; {grid_style}",
             for (i , idx) in (layout.start_idx..layout.end_idx).enumerate() {
                 {
                     let item = items[idx].clone();
