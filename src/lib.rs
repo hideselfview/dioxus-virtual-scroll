@@ -37,16 +37,21 @@ struct WindowListenersCleanup {
 
 impl Drop for WindowListenersCleanup {
     fn drop(&mut self) {
-        if let Some(window) = web_sys_x::window() {
-            let _ = window.remove_event_listener_with_callback(
-                "scroll",
-                self.scroll_callback.as_ref().unchecked_ref(),
-            );
-            let _ = window.remove_event_listener_with_callback(
-                "resize",
-                self.resize_callback.as_ref().unchecked_ref(),
-            );
-        }
+        // During app shutdown, the JS environment may be in an invalid state and
+        // web_sys_x::window() can panic. Use catch_unwind to handle this gracefully.
+        // If the window is gone, the event listeners are already cleaned up anyway.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(window) = web_sys_x::window() {
+                let _ = window.remove_event_listener_with_callback(
+                    "scroll",
+                    self.scroll_callback.as_ref().unchecked_ref(),
+                );
+                let _ = window.remove_event_listener_with_callback(
+                    "resize",
+                    self.resize_callback.as_ref().unchecked_ref(),
+                );
+            }
+        }));
     }
 }
 
