@@ -271,6 +271,15 @@ fn use_window_scroll_listeners(
             return;
         };
 
+        // Disable browser scroll anchoring on the document element
+        if let Some(document) = window.document() {
+            if let Some(doc_element) = document.document_element() {
+                if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
+                    let _ = html_element.style().set_property("overflow-anchor", "none");
+                }
+            }
+        }
+
         // Set initial height from window
         if let Ok(inner_height) = window.inner_height() {
             if let Some(h) = inner_height.as_f64() {
@@ -372,6 +381,11 @@ fn use_element_scroll_listeners(
             return;
         };
 
+        // Disable browser scroll anchoring - virtual scroller manages position
+        if let Some(html_element) = element.dyn_ref::<web_sys_x::HtmlElement>() {
+            let _ = html_element.style().set_property("overflow-anchor", "none");
+        }
+
         // Set initial height from element
         let rect = element.get_bounding_client_rect();
         container_height.set(rect.height());
@@ -384,7 +398,9 @@ fn use_element_scroll_listeners(
         let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
             pending_for_raf.set(false);
             let element_scroll_top = element_for_raf.scroll_top() as f64;
-            if let Some(offset) = grid_offset_top() {
+            let offset = grid_offset_top();
+
+            if let Some(offset) = offset {
                 let new_scroll_top = (element_scroll_top - offset).max(0.0);
                 if (scroll_top() - new_scroll_top).abs() > 0.5 {
                     scroll_top.set(new_scroll_top);
@@ -740,6 +756,9 @@ fn ElementScrollGrid<T: Clone + PartialEq + 'static>(
     let mut grid_offset_top: Signal<Option<f64>> = use_signal(|| None);
     let container_id = use_container_id();
 
+    // Read the signal to subscribe to changes - ensures re-render when scroll container mounts
+    let _scroll_container_mounted = scroll_container().is_some();
+
     use_element_scroll_listeners(
         scroll_container,
         scroll_top,
@@ -791,6 +810,7 @@ fn ElementScrollGrid<T: Clone + PartialEq + 'static>(
                     let scroll_rect = scroll_element.get_bounding_client_rect();
                     let offset = grid_rect.top() - scroll_rect.top()
                         + scroll_element.scroll_top() as f64;
+
                     grid_offset_top.set(Some(offset));
                     container_width.set(grid_rect.width());
                 });

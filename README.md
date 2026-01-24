@@ -151,7 +151,7 @@ rsx! {
 
 ```bash
 # Web demo (for browser testing)
-dx serve --example web_demo
+dx serve --example web_demo --platform web
 
 # Desktop stress test (demonstrates IPC issue under load)
 cargo run --example stress_test
