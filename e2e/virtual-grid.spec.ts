@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 
-type ScrollMode = 'window' | 'container';
+type ScrollMode = 'window' | 'container' | 'element';
 
 async function countGridItems(page: Page): Promise<number> {
   return await page.locator('.virtual-grid-content > div').count();
@@ -9,6 +9,11 @@ async function countGridItems(page: Page): Promise<number> {
 async function scrollTo(page: Page, y: number, mode: ScrollMode, waitMs = 200) {
   if (mode === 'window') {
     await page.evaluate((scrollY) => window.scrollTo(0, scrollY), y);
+  } else if (mode === 'element') {
+    await page.evaluate((scrollY) => {
+      const container = document.querySelector('.element-scroll-container');
+      if (container) container.scrollTop = scrollY;
+    }, y);
   } else {
     await page.evaluate((scrollY) => {
       const container = document.querySelector('.virtual-grid-container');
@@ -21,6 +26,11 @@ async function scrollTo(page: Page, y: number, mode: ScrollMode, waitMs = 200) {
 async function getScrollY(page: Page, mode: ScrollMode): Promise<number> {
   if (mode === 'window') {
     return await page.evaluate(() => window.scrollY);
+  } else if (mode === 'element') {
+    return await page.evaluate(() => {
+      const container = document.querySelector('.element-scroll-container');
+      return container ? container.scrollTop : 0;
+    });
   } else {
     return await page.evaluate(() => {
       const container = document.querySelector('.virtual-grid-container');
@@ -43,7 +53,7 @@ async function setupMode(page: Page, mode: ScrollMode) {
   await page.waitForTimeout(500);
 }
 
-const modes: ScrollMode[] = ['window', 'container'];
+const modes: ScrollMode[] = ['window', 'container', 'element'];
 
 for (const mode of modes) {
   test.describe(`VirtualGrid (${mode} scroll)`, () => {
@@ -73,7 +83,9 @@ for (const mode of modes) {
     
     // Debug: check content height and scroll position
     const debug = await page.evaluate((m) => {
-      const container = document.querySelector('.virtual-grid-container');
+      const container = m === 'element' 
+        ? document.querySelector('.element-scroll-container')
+        : document.querySelector('.virtual-grid-container');
       const scrollY = m === 'window' ? window.scrollY : (container?.scrollTop ?? 0);
       const docHeight = m === 'window' ? document.documentElement.scrollHeight : (container?.scrollHeight ?? 0);
       const spacerTop = document.querySelector('.virtual-grid-spacer-top') as HTMLElement;
@@ -93,7 +105,9 @@ for (const mode of modes) {
     await page.waitForTimeout(500);
     
     const afterDebug = await page.evaluate((m) => {
-      const container = document.querySelector('.virtual-grid-container');
+      const container = m === 'element'
+        ? document.querySelector('.element-scroll-container')
+        : document.querySelector('.virtual-grid-container');
       return {
         scrollY: m === 'window' ? window.scrollY : (container?.scrollTop ?? 0),
         docHeight: m === 'window' ? document.documentElement.scrollHeight : (container?.scrollHeight ?? 0),
@@ -143,12 +157,26 @@ for (const mode of modes) {
 
     // Measure layout constants at scroll=0
     const layoutInfo = await page.evaluate((m) => {
-      const container = document.querySelector('.virtual-grid-container')!;
+      const gridContainer = document.querySelector('.virtual-grid-container')!;
+      const scrollContainer = m === 'element' 
+        ? document.querySelector('.element-scroll-container')!
+        : gridContainer;
       const gridItems = document.querySelectorAll('.virtual-grid-content > div[data-index]');
       
-      const containerRect = container.getBoundingClientRect();
-      // For window scroll, offset is relative to page; for container scroll, it's 0 (relative to container)
-      const containerPageOffset = m === 'window' ? containerRect.top + window.scrollY : 0;
+      const gridRect = gridContainer.getBoundingClientRect();
+      const scrollRect = scrollContainer.getBoundingClientRect();
+      
+      // For window scroll, offset is relative to page
+      // For container scroll, it's 0 (grid is at top of its container)
+      // For element scroll, we need the grid's offset within the scroll container
+      let containerPageOffset: number;
+      if (m === 'window') {
+        containerPageOffset = gridRect.top + window.scrollY;
+      } else if (m === 'element') {
+        containerPageOffset = gridRect.top - scrollRect.top;
+      } else {
+        containerPageOffset = 0;
+      }
       
       const itemRects = Array.from(gridItems).slice(0, 20).map(el => el.getBoundingClientRect());
       const uniqueYs = [...new Set(itemRects.map(r => Math.round(r.y)))].sort((a, b) => a - b);
@@ -157,8 +185,8 @@ for (const mode of modes) {
       const firstRowY = itemRects[0]?.y ?? 0;
       const columns = itemRects.filter(r => Math.abs(r.y - firstRowY) < 5).length;
       
-      // For container mode, we need the container's top to calculate expected positions
-      const containerTop = containerRect.top;
+      // For container/element mode, we need the scroll container's top to calculate expected positions
+      const containerTop = m === 'element' ? scrollRect.top : gridRect.top;
       
       return { containerPageOffset, rowHeight, columns, containerTop };
     }, mode);
@@ -205,12 +233,16 @@ for (const mode of modes) {
       }
 
       // Every item's absolute position should match expected based on its row
-      // For container mode, positions are relative to viewport, so we add containerTop
+      // For container/element mode, positions are relative to viewport, so we add containerTop
       for (const { index, y: actualY } of currentData) {
         const row = Math.floor(index / layoutInfo.columns);
-        const expectedY = mode === 'window'
-          ? layoutInfo.containerPageOffset + (row * layoutInfo.rowHeight) - scrollY
-          : layoutInfo.containerTop + (row * layoutInfo.rowHeight) - scrollY;
+        let expectedY: number;
+        if (mode === 'window') {
+          expectedY = layoutInfo.containerPageOffset + (row * layoutInfo.rowHeight) - scrollY;
+        } else {
+          // For container and element modes, items are offset by containerTop and grid offset
+          expectedY = layoutInfo.containerTop + layoutInfo.containerPageOffset + (row * layoutInfo.rowHeight) - scrollY;
+        }
         const error = Math.abs(actualY - expectedY);
         
         expect(
@@ -418,3 +450,45 @@ for (const mode of modes) {
   });
   });
 }
+
+// Element-specific test: verify header offset is handled correctly
+test.describe('VirtualGrid (element scroll) - offset handling', () => {
+  test('handles content above grid correctly', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForSelector('.virtual-grid-content', { timeout: 30000 });
+    await page.locator('select').selectOption('element');
+    await page.waitForSelector('.element-scroll-header', { timeout: 30000 });
+    await page.waitForTimeout(500);
+
+    // Verify header exists
+    const header = page.locator('.element-scroll-header');
+    await expect(header).toBeVisible();
+    
+    // Get header height
+    const headerHeight = await header.evaluate(el => el.getBoundingClientRect().height);
+    console.log(`Header height: ${headerHeight}px`);
+    expect(headerHeight).toBeGreaterThan(0);
+
+    // Get initial first item index
+    const initialIndices = await page.locator('.virtual-grid-content > div[data-index]').evaluateAll(
+      els => els.map(el => parseInt(el.dataset.index!, 10))
+    );
+    expect(initialIndices[0]).toBe(0);
+
+    // Scroll well past the header (need to scroll enough to get past buffer rows)
+    // With ~296px row height and 2 buffer rows, we need to scroll ~1500px+ to see index change
+    await page.evaluate((scrollY) => {
+      const container = document.querySelector('.element-scroll-container');
+      if (container) container.scrollTop = scrollY;
+    }, headerHeight + 2000);
+    await page.waitForTimeout(500);
+
+    // Verify items changed - should now show items further down
+    const scrolledIndices = await page.locator('.virtual-grid-content > div[data-index]').evaluateAll(
+      els => els.map(el => parseInt(el.dataset.index!, 10))
+    );
+    
+    console.log(`Initial first index: ${initialIndices[0]}, After scroll: ${scrolledIndices[0]}`);
+    expect(scrolledIndices[0]).toBeGreaterThan(0);
+  });
+});

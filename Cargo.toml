@@ -8,7 +8,7 @@ repository = "https://github.com/user/dioxus-virtual-scroll"
 
 [dependencies]
 dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", default-features = false, features = ["signals", "html", "macro", "hooks"] }
-web-sys-x = { version = "0.3.83-alpha.1", features = ["Element", "HtmlElement", "DomRect", "Window", "Document", "ScrollToOptions", "ScrollBehavior", "AddEventListenerOptions", "ResizeObserver", "ResizeObserverEntry", "ResizeObserverSize"] }
+web-sys-x = { version = "0.3.83-alpha.1", features = ["Element", "HtmlElement", "DomRect", "Window", "Document", "ScrollToOptions", "ScrollBehavior", "AddEventListenerOptions", "ResizeObserver", "ResizeObserverEntry", "ResizeObserverSize", "EventTarget"] }
 wasm-bindgen-x = "0.2.106-alpha.1"
 js-sys-x = "0.3.83-alpha.1"
 wasm-bindgen-futures-x = "0.4.56-alpha.1"

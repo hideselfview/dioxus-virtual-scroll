@@ -55,18 +55,38 @@ impl Drop for WindowListenersCleanup {
     }
 }
 
+/// Cleanup handle for element scroll listeners
+struct ElementListenersCleanup {
+    element: web_sys_x::Element,
+    scroll_callback: Closure<dyn FnMut()>,
+    _raf_callback: Rc<Closure<dyn FnMut()>>,
+}
+
+impl Drop for ElementListenersCleanup {
+    fn drop(&mut self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = self.element.remove_event_listener_with_callback(
+                "scroll",
+                self.scroll_callback.as_ref().unchecked_ref(),
+            );
+        }));
+    }
+}
+
 // =============================================================================
 // Public types
 // =============================================================================
 
 /// Scroll target for the virtual grid
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub enum ScrollTarget {
     /// Grid has its own scrollable container (default)
     #[default]
     Container,
     /// Use window/body scrolling
     Window,
+    /// Use an existing scrollable element via its MountedData
+    Element(ReadSignal<Option<Rc<MountedData>>>),
 }
 
 /// Wrapper for render functions that allows capturing state.
@@ -331,6 +351,127 @@ fn use_window_scroll_listeners(
     });
 }
 
+/// Hook to set up scroll listeners on an external element for element-scroll mode.
+fn use_element_scroll_listeners(
+    scroll_container: ReadSignal<Option<Rc<MountedData>>>,
+    mut scroll_top: Signal<f64>,
+    mut container_height: Signal<f64>,
+    grid_offset_top: Signal<Option<f64>>,
+) {
+    let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ElementListenersCleanup>)));
+    let handle_clone = handle.clone();
+
+    use_effect(move || {
+        // Wait for the scroll container to be mounted
+        let Some(mounted) = scroll_container() else {
+            return;
+        };
+
+        // Get the raw DOM element from MountedData
+        let Some(element) = mounted.downcast::<web_sys_x::Element>().cloned() else {
+            return;
+        };
+
+        // Set initial height from element
+        let rect = element.get_bounding_client_rect();
+        container_height.set(rect.height());
+
+        // rAF-based throttling
+        let scroll_pending = Rc::new(std::cell::Cell::new(false));
+        let element_for_raf = element.clone();
+
+        let pending_for_raf = scroll_pending.clone();
+        let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
+            pending_for_raf.set(false);
+            let element_scroll_top = element_for_raf.scroll_top() as f64;
+            if let Some(offset) = grid_offset_top() {
+                let new_scroll_top = (element_scroll_top - offset).max(0.0);
+                if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                    scroll_top.set(new_scroll_top);
+                }
+            } else {
+                // No offset yet, use raw scroll position
+                if (scroll_top() - element_scroll_top).abs() > 0.5 {
+                    scroll_top.set(element_scroll_top);
+                }
+            }
+        })
+            as Box<dyn FnMut()>));
+
+        let pending_for_scroll = scroll_pending.clone();
+        let raf_for_scroll = raf_callback.clone();
+        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+            if pending_for_scroll.get() {
+                return;
+            }
+            pending_for_scroll.set(true);
+
+            if let Some(window) = web_sys_x::window() {
+                let _ = window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
+            }
+        }) as Box<dyn FnMut()>);
+
+        let scroll_options = web_sys_x::AddEventListenerOptions::new();
+        scroll_options.set_passive(true);
+        element
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                "scroll",
+                scroll_closure.as_ref().unchecked_ref(),
+                &scroll_options,
+            )
+            .ok();
+
+        *handle_clone.borrow_mut() = Some(ElementListenersCleanup {
+            element,
+            scroll_callback: scroll_closure,
+            _raf_callback: raf_callback,
+        });
+    });
+}
+
+/// Hook to observe an external element's size via ResizeObserver.
+fn use_element_resize_observer(
+    scroll_container: ReadSignal<Option<Rc<MountedData>>>,
+    mut container_height: Signal<f64>,
+) {
+    let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
+    let handle_clone = handle.clone();
+
+    use_effect(move || {
+        let Some(mounted) = scroll_container() else {
+            return;
+        };
+
+        let Some(element) = mounted.downcast::<web_sys_x::Element>().cloned() else {
+            return;
+        };
+
+        let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
+            Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                for entry in entries {
+                    let sizes = entry.content_box_size();
+                    let size = sizes.get(0);
+                    let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                    let height = size.block_size();
+
+                    if (container_height() - height).abs() > 1.0 {
+                        container_height.set(height);
+                    }
+                }
+            }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+        );
+
+        let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .expect("ResizeObserver should be supported");
+        observer.observe(&element);
+
+        *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
+            observer,
+            _callback: callback,
+        });
+    });
+}
+
 /// Compute effective config with measured item height override
 fn effective_config(config: &VirtualGridConfig, measured_height: Option<f64>) -> VirtualGridConfig {
     let mut cfg = config.clone();
@@ -384,6 +525,16 @@ pub fn VirtualGrid<T: Clone + PartialEq + 'static>(
                 render_item,
                 key_fn,
                 item_class,
+            }
+        },
+        ScrollTarget::Element(scroll_container) => rsx! {
+            ElementScrollGrid {
+                items,
+                config,
+                render_item,
+                key_fn,
+                item_class,
+                scroll_container,
             }
         },
     }
@@ -554,6 +705,94 @@ fn WindowScrollGrid<T: Clone + PartialEq + 'static>(
                     container_width.set(rect.width());
                     let initial_scroll = (scroll_y - page_offset).max(0.0);
                     scroll_top.set(initial_scroll);
+                });
+            },
+            GridContent {
+                layout,
+                items,
+                config: eff_config,
+                item_class,
+                render_item,
+                key_fn,
+                measured_item_height,
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Element scroll mode
+// =============================================================================
+
+#[component]
+fn ElementScrollGrid<T: Clone + PartialEq + 'static>(
+    items: Vec<T>,
+    config: VirtualGridConfig,
+    render_item: RenderFn<T>,
+    key_fn: KeyFn<T>,
+    item_class: String,
+    scroll_container: ReadSignal<Option<Rc<MountedData>>>,
+) -> Element {
+    let scroll_top = use_signal(|| 0.0_f64);
+    let mut container_width = use_signal(|| 1000.0_f64);
+    let container_height = use_signal(|| 800.0_f64);
+    let measured_item_height: Signal<Option<f64>> = use_signal(|| None);
+    let mut grid_offset_top: Signal<Option<f64>> = use_signal(|| None);
+    let container_id = use_container_id();
+
+    use_element_scroll_listeners(
+        scroll_container,
+        scroll_top,
+        container_height,
+        grid_offset_top,
+    );
+    use_element_resize_observer(scroll_container, container_height);
+    use_resize_observer(container_id.clone(), container_width, None);
+
+    // Compute layout
+    let eff_config = effective_config(&config, measured_item_height());
+    let layout = GridLayout::calculate(
+        items.len(),
+        &eff_config,
+        container_width(),
+        container_height(),
+        scroll_top(),
+    );
+
+    let container_id_for_mount = container_id.clone();
+
+    rsx! {
+        div {
+            id: "{container_id}",
+            class: "virtual-grid-container",
+            style: "width: 100%; overflow-anchor: none;",
+            onmounted: move |_evt| {
+                let container_id = container_id_for_mount.clone();
+
+                // Wait for layout to stabilize before measuring
+                spawn(async move {
+                    wait_for_layout().await;
+
+                    let Some(window) = web_sys_x::window() else { return };
+                    let Some(document) = window.document() else { return };
+                    let Some(grid_element) = document.get_element_by_id(&container_id) else {
+                        return;
+                    };
+
+                    // Get the scroll container element
+                    let Some(mounted) = scroll_container() else { return };
+                    let Some(scroll_element) = mounted.downcast::<web_sys_x::Element>().cloned()
+
+                    // Calculate grid's offset within the scroll container
+                    else {
+                        return;
+                    };
+                    let grid_rect = grid_element.get_bounding_client_rect();
+                    let scroll_rect = scroll_element.get_bounding_client_rect();
+                    let offset = grid_rect.top() - scroll_rect.top()
+                        + scroll_element.scroll_top() as f64;
+                    grid_offset_top.set(Some(offset));
+                    container_width.set(grid_rect.width());
                 });
             },
             GridContent {

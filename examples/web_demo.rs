@@ -29,7 +29,8 @@ fn generate_albums(count: usize) -> Vec<Album> {
 fn App() -> Element {
     let mut album_count = use_signal(|| 2000usize);
     let mut cycle = use_signal(|| 0u32);
-    let mut use_window_scroll = use_signal(|| true);
+    let mut scroll_mode = use_signal(|| "window".to_string());
+    let mut scroll_container: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
 
     let albums = generate_albums(album_count());
 
@@ -61,11 +62,7 @@ fn App() -> Element {
     let key_fn = KeyFn(Rc::new(|album: &Album| album.id.clone()));
 
     let cycle_val = cycle();
-    let (scroll_target, container_style) = if use_window_scroll() {
-        (ScrollTarget::Window, "")
-    } else {
-        (ScrollTarget::Container, "height: calc(100vh - 8rem);")
-    };
+    let mode = scroll_mode();
 
     rsx! {
         style {
@@ -94,13 +91,14 @@ fn App() -> Element {
                     "Mode: "
                     select {
                         style: "padding: 4px;",
-                        value: if use_window_scroll() { "window" } else { "container" },
+                        value: "{mode}",
                         onchange: move |e| {
-                            use_window_scroll.set(e.value() == "window");
+                            scroll_mode.set(e.value());
                             cycle += 1;
                         },
                         option { value: "window", "Window" }
                         option { value: "container", "Container" }
+                        option { value: "element", "Element" }
                     }
                 }
                 button {
@@ -110,15 +108,58 @@ fn App() -> Element {
                 }
             }
         }
-        div { style: "padding: 0 20px 20px 20px;",
-            VirtualGrid {
-                key: "{cycle_val}",
-                items: albums,
-                config,
-                render_item,
-                key_fn,
-                scroll_target,
-                container_style,
+        {
+            // Content above the grid to test offset calculation
+            match mode.as_str() {
+                "window" => rsx! {
+                    div { style: "padding: 0 20px 20px 20px;",
+                        VirtualGrid {
+                            key: "{cycle_val}",
+                            items: albums,
+                            config,
+                            render_item,
+                            key_fn,
+                            scroll_target: ScrollTarget::Window,
+                        }
+                    }
+                },
+                "container" => rsx! {
+                    div { style: "padding: 0 20px 20px 20px;",
+                        VirtualGrid {
+                            key: "{cycle_val}",
+                            items: albums,
+                            config,
+                            render_item,
+                            key_fn,
+                            scroll_target: ScrollTarget::Container,
+                            container_style: "height: calc(100vh - 8rem);",
+                        }
+                    }
+                },
+                "element" => rsx! {
+                    div {
+                        class: "element-scroll-container",
+                        style: "margin: 0 20px 20px 20px; height: calc(100vh - 8rem); overflow-y: auto;",
+                        onmounted: move |evt| scroll_container.set(Some(evt.data())),
+                        div {
+                            class: "element-scroll-header",
+                            style: "padding: 16px; background: #2a2a4e; margin-bottom: 16px; border-radius: 8px;",
+                            h2 { style: "color: white; margin: 0;", "Content Above Grid" }
+                            p { style: "color: #888; margin: 8px 0 0 0;",
+                                "This header tests that the grid correctly calculates its offset within the scroll container."
+                            }
+                        }
+                        VirtualGrid {
+                            key: "{cycle_val}",
+                            items: albums,
+                            config,
+                            render_item,
+                            key_fn,
+                            scroll_target: ScrollTarget::Element(scroll_container.into()),
+                        }
+                    }
+                },
+                _ => rsx! {},
             }
         }
     }
