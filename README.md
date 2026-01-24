@@ -12,17 +12,115 @@ Early development. Basic features work.
 
 - **Grid layout** - auto-fills columns based on container width
 - **Auto-measurement** - measures container and item dimensions with ResizeObserver
+- **3 scroll modes** - Window, Container, or Element (see below)
+- **Tested** - [E2E tests](e2e/virtual-grid.spec.ts) with Playwright
 
-## Not Implemented
+## Scroll Modes
 
-- **List layout** - single column virtualized list
-- **Initial scroll** - always beings at 0
+### Container (default)
+
+The grid creates its own scrollable container. Use when you want the grid to manage its own scroll area.
+
+```
+┌─────────────────────────┐
+│  Page content           │
+├─────────────────────────┤
+│ ┌─────────────────────┐ │
+│ │ VirtualGrid         │ │  ← This div scrolls
+│ │ ┌─────┐ ┌─────┐     │ │
+│ │ │     │ │     │ ... │▐│
+│ │ └─────┘ └─────┘     │▐│
+│ │ ┌─────┐ ┌─────┐     │▐│  (scrollbar)
+│ │ │     │ │     │ ... │▐│
+│ │ └─────┘ └─────┘     │ │
+│ └─────────────────────┘ │
+└─────────────────────────┘
+```
+
+```rust
+VirtualGrid {
+    scroll_target: ScrollTarget::Container,
+    container_style: "height: 500px;",  // height required
+    // ...
+}
+```
+
+### Window
+
+The grid uses window/body scrolling. Use when the grid is part of a full-page layout.
+
+```
+┌─────────────────────────┐
+│  Page header            │
+├─────────────────────────┤
+│  VirtualGrid            │
+│ ┌─────┐ ┌─────┐         │
+│ │     │ │     │ ...     │
+│ └─────┘ └─────┘         │▐
+│ ┌─────┐ ┌─────┐         │▐  ← Window scrollbar
+│ │     │ │     │ ...     │▐
+│ └─────┘ └─────┘         │
+│         ...             │
+└─────────────────────────┘
+```
+
+```rust
+VirtualGrid {
+    scroll_target: ScrollTarget::Window,
+    // ...
+}
+```
+
+### Element
+
+The grid uses an external scrollable element that you provide via `MountedData`. Use when the grid lives inside an existing scroll container alongside other content.
+
+```
+┌─────────────────────────┐
+│  Page content           │
+├─────────────────────────┤
+│ ┌─────────────────────┐ │
+│ │   Scroll element    │ │  ← This div scrolls
+│ │ ┌─────────────────┐ │▐│
+│ │ │ Header/content  │ │▐│
+│ │ └─────────────────┘ │▐│  (scrollbar)
+│ │  VirtualGrid        │▐│
+│ │ ┌─────┐ ┌─────┐     │▐│
+│ │ │     │ │     │ ... │▐│
+│ │ └─────┘ └─────┘     │ │
+│ └─────────────────────┘ │
+└─────────────────────────┘
+```
+
+```rust
+let mut scroll_container: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
+
+rsx! {
+    div {
+        style: "height: 500px; overflow-y: auto;",
+        onmounted: move |evt| scroll_container.set(Some(evt.data())),
+        
+        div { "Content above the grid" }
+        
+        VirtualGrid {
+            scroll_target: ScrollTarget::Element(scroll_container.into()),
+            // ...
+        }
+    }
+}
+```
+
+## TODO
+
+- **Initial scroll** - always begins at 0
 - **Scroll handle** - programmatic seeking to specific items
 
 ## Usage
 
 ```rust
+use dioxus::prelude::*;
 use dioxus_virtual_scroll::{VirtualGrid, VirtualGridConfig, RenderFn, KeyFn, ScrollTarget};
+use std::rc::Rc;
 
 let config = VirtualGridConfig {
     item_width: 200.0,
@@ -43,8 +141,8 @@ rsx! {
         config,
         render_item,
         key_fn,
-        scroll_target: ScrollTarget::Container, // or ScrollTarget::Window
-        container_class: "h-[500px]", // height required for Container mode
+        scroll_target: ScrollTarget::Container,
+        container_style: "height: 500px;",  // height required for Container mode
     }
 }
 ```
