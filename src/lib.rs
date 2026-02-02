@@ -213,51 +213,76 @@ fn use_resize_observer(
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
     let handle_clone = handle.clone();
 
+    // Bump this signal to re-run the effect after a catch_unwind recovery.
+    let mut retry = use_signal(|| 0u8);
+
     use_effect(move || {
-        let Some(window) = web_sys_x::window() else {
-            return;
-        };
-        let Some(document) = window.document() else {
-            return;
-        };
-        let Some(element) = document.get_element_by_id(&container_id) else {
-            return;
-        };
+        // Subscribe so that bumping `retry` re-triggers this effect.
+        let _attempt = retry();
 
-        let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
-            Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                // Workaround: wry-bindgen can panic with U32BufferEmpty when the
-                // app is reopened quickly after closing. See bae-fm/bae#30.
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    for entry in entries {
-                        let sizes = entry.content_box_size();
-                        let size = sizes.get(0);
-                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                        let width = size.inline_size();
+        // Workaround: wry-bindgen can panic with U8BufferEmpty during startup
+        // when the JS bridge isn't fully initialized. Catch the panic and
+        // schedule a retry — the bridge will be ready on the next attempt.
+        // See bae-fm/bae#36.
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let window = web_sys_x::window().expect("window");
+            let document = window.document().expect("document");
+            let Some(element) = document.get_element_by_id(&container_id) else {
+                return;
+            };
 
-                        if (width_signal() - width).abs() > 1.0 {
-                            width_signal.set(width);
-                        }
+            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> =
+                Closure::wrap(
+                    Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                        // The callback can also panic for the same reason.
+                        // See bae-fm/bae#30.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            for entry in entries {
+                                let sizes = entry.content_box_size();
+                                let size = sizes.get(0);
+                                let size: web_sys_x::ResizeObserverSize =
+                                    size.unchecked_into();
+                                let width = size.inline_size();
 
-                        if let Some(mut h_sig) = height_signal {
-                            let height = size.block_size();
-                            if (h_sig() - height).abs() > 1.0 {
-                                h_sig.set(height);
+                                if (width_signal() - width).abs() > 1.0 {
+                                    width_signal.set(width);
+                                }
+
+                                if let Some(mut h_sig) = height_signal {
+                                    let height = size.block_size();
+                                    if (h_sig() - height).abs() > 1.0 {
+                                        h_sig.set(height);
+                                    }
+                                }
                             }
-                        }
-                    }
-                }));
-            }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
-        );
+                        }));
+                    }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+                );
 
-        let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
-            .expect("ResizeObserver should be supported");
-        observer.observe(&element);
+            let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
+                .expect("ResizeObserver should be supported");
+            observer.observe(&element);
 
-        *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
-            observer,
-            _callback: callback,
-        });
+            *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
+                observer,
+                _callback: callback,
+            });
+        }));
+
+        if ok.is_err() {
+            spawn(async move {
+                // Small delay before retrying to let the JS bridge initialize.
+                let promise = js_sys_x::Promise::new(&mut |resolve, _| {
+                    let _ = web_sys_x::window()
+                        .unwrap()
+                        .set_timeout_with_callback_and_timeout_and_arguments_0(
+                            &resolve, 50,
+                        );
+                });
+                let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
+                retry += 1;
+            });
+        }
     });
 }
 
