@@ -12,6 +12,7 @@ web-sys-x = { version = "0.3.83-alpha.1", features = ["Element", "HtmlElement", 
 wasm-bindgen-x = "0.2.106-alpha.1"
 js-sys-x = "0.3.83-alpha.1"
 wasm-bindgen-futures-x = "0.4.56-alpha.1"
+tracing = "0.1"
 
 [dev-dependencies]
 dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "wasm-bindgen", features = ["web"] }
