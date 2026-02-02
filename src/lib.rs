@@ -226,23 +226,27 @@ fn use_resize_observer(
 
         let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
             Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                for entry in entries {
-                    let sizes = entry.content_box_size();
-                    let size = sizes.get(0);
-                    let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                    let width = size.inline_size();
+                // Workaround: wry-bindgen can panic with U32BufferEmpty when the
+                // app is reopened quickly after closing. See bae-fm/bae#30.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    for entry in entries {
+                        let sizes = entry.content_box_size();
+                        let size = sizes.get(0);
+                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                        let width = size.inline_size();
 
-                    if (width_signal() - width).abs() > 1.0 {
-                        width_signal.set(width);
-                    }
+                        if (width_signal() - width).abs() > 1.0 {
+                            width_signal.set(width);
+                        }
 
-                    if let Some(mut h_sig) = height_signal {
-                        let height = size.block_size();
-                        if (h_sig() - height).abs() > 1.0 {
-                            h_sig.set(height);
+                        if let Some(mut h_sig) = height_signal {
+                            let height = size.block_size();
+                            if (h_sig() - height).abs() > 1.0 {
+                                h_sig.set(height);
+                            }
                         }
                     }
-                }
+                }));
             }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
         );
 
@@ -464,16 +468,20 @@ fn use_element_resize_observer(
 
         let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
             Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                for entry in entries {
-                    let sizes = entry.content_box_size();
-                    let size = sizes.get(0);
-                    let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                    let height = size.block_size();
+                // Workaround: wry-bindgen can panic with U32BufferEmpty when the
+                // app is reopened quickly after closing. See bae-fm/bae#30.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    for entry in entries {
+                        let sizes = entry.content_box_size();
+                        let size = sizes.get(0);
+                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                        let height = size.block_size();
 
-                    if (container_height() - height).abs() > 1.0 {
-                        container_height.set(height);
+                        if (container_height() - height).abs() > 1.0 {
+                            container_height.set(height);
+                        }
                     }
-                }
+                }));
             }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
         );
 
