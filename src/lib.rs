@@ -213,77 +213,53 @@ fn use_resize_observer(
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
     let handle_clone = handle.clone();
 
-    // Bump this signal to re-run the effect after a catch_unwind recovery.
-    let mut retry = use_signal(|| 0u8);
-
     use_effect(move || {
-        // Subscribe so that bumping `retry` re-triggers this effect.
-        let _attempt = retry();
+        let Some(window) = web_sys_x::window() else {
+            return;
+        };
+        let Some(document) = window.document() else {
+            return;
+        };
+        let Some(element) = document.get_element_by_id(&container_id) else {
+            return;
+        };
 
-        // Workaround: wry-bindgen can panic with U8BufferEmpty during startup
-        // when the JS bridge isn't fully initialized. Catch the panic and
-        // schedule a retry — the bridge will be ready on the next attempt.
-        // See bae-fm/bae#36.
-        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let window = web_sys_x::window().expect("window");
-            let document = window.document().expect("document");
-            let Some(element) = document.get_element_by_id(&container_id) else {
-                return;
-            };
+        let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
+            Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                // Workaround: wry-bindgen can panic in callbacks when the app is
+                // reopened quickly after closing. See bae-fm/bae#30.
+                if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    for entry in entries {
+                        let sizes = entry.content_box_size();
+                        let size = sizes.get(0);
+                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                        let width = size.inline_size();
 
-            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
-                Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                    // The callback can also panic for the same reason.
-                    // See bae-fm/bae#30.
-                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        for entry in entries {
-                            let sizes = entry.content_box_size();
-                            let size = sizes.get(0);
-                            let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                            let width = size.inline_size();
+                        if (width_signal() - width).abs() > 1.0 {
+                            width_signal.set(width);
+                        }
 
-                            if (width_signal() - width).abs() > 1.0 {
-                                width_signal.set(width);
-                            }
-
-                            if let Some(mut h_sig) = height_signal {
-                                let height = size.block_size();
-                                if (h_sig() - height).abs() > 1.0 {
-                                    h_sig.set(height);
-                                }
+                        if let Some(mut h_sig) = height_signal {
+                            let height = size.block_size();
+                            if (h_sig() - height).abs() > 1.0 {
+                                h_sig.set(height);
                             }
                         }
-                    })) {
-                        tracing::warn!("resize observer callback panicked: {e:?}");
                     }
-                }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
-            );
+                })) {
+                    tracing::warn!("resize observer callback panicked: {e:?}");
+                }
+            }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+        );
 
-            let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
-                .expect("ResizeObserver should be supported");
-            observer.observe(&element);
+        let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .expect("ResizeObserver should be supported");
+        observer.observe(&element);
 
-            *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
-                observer,
-                _callback: callback,
-            });
-        }));
-
-        if let Err(e) = ok {
-            tracing::warn!("resize observer setup panicked, retrying: {e:?}");
-
-            spawn(async move {
-                let Some(window) = web_sys_x::window() else {
-                    return;
-                };
-                let promise = js_sys_x::Promise::new(&mut |resolve, _| {
-                    let _ =
-                        window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 50);
-                });
-                let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
-                retry += 1;
-            });
-        }
+        *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
+            observer,
+            _callback: callback,
+        });
     });
 }
 
@@ -296,125 +272,97 @@ fn use_window_scroll_listeners(
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<WindowListenersCleanup>)));
     let handle_clone = handle.clone();
 
-    // Bump this signal to re-run the effect after a catch_unwind recovery.
-    let mut retry = use_signal(|| 0u8);
-
     use_effect(move || {
-        // Subscribe so that bumping `retry` re-triggers this effect.
-        let _attempt = retry();
+        let Some(window) = web_sys_x::window() else {
+            return;
+        };
 
-        // Workaround: wry-bindgen can panic with U8BufferEmpty during startup
-        // when the JS bridge isn't fully initialized. See bae-fm/bae#42.
-        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let Some(window) = web_sys_x::window() else {
-                return;
-            };
-
-            // Disable browser scroll anchoring on the document element
-            if let Some(document) = window.document() {
-                if let Some(doc_element) = document.document_element() {
-                    if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
-                        let _ = html_element.style().set_property("overflow-anchor", "none");
-                    }
+        // Disable browser scroll anchoring on the document element
+        if let Some(document) = window.document() {
+            if let Some(doc_element) = document.document_element() {
+                if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
+                    let _ = html_element.style().set_property("overflow-anchor", "none");
                 }
             }
-
-            // Set initial height from window
-            if let Ok(inner_height) = window.inner_height() {
-                if let Some(h) = inner_height.as_f64() {
-                    container_height.set(h);
-                }
-            }
-
-            // rAF-based throttling: pending flag shared between scroll and rAF callbacks
-            let scroll_pending = Rc::new(std::cell::Cell::new(false));
-
-            // Create rAF callback once - it reads current scroll position and updates signal
-            let pending_for_raf = scroll_pending.clone();
-            let raf_callback: Rc<Closure<dyn FnMut()>> =
-                Rc::new(Closure::wrap(Box::new(move || {
-                    pending_for_raf.set(false);
-                    if let Some(window) = web_sys_x::window() {
-                        let window_y = window.scroll_y().unwrap_or(0.0);
-                        if let Some(offset) = element_offset_top() {
-                            let new_scroll_top = (window_y - offset).max(0.0);
-                            if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                                scroll_top.set(new_scroll_top);
-                            }
-                        }
-                    }
-                })
-                    as Box<dyn FnMut()>));
-
-            // Scroll handler schedules the rAF callback if not already pending
-            let pending_for_scroll = scroll_pending.clone();
-            let raf_for_scroll = raf_callback.clone();
-            let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-                if pending_for_scroll.get() {
-                    return;
-                }
-                pending_for_scroll.set(true);
-
-                if let Some(window) = web_sys_x::window() {
-                    let _ =
-                        window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
-                }
-            }) as Box<dyn FnMut()>);
-
-            let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-                if let Some(window) = web_sys_x::window() {
-                    if let Ok(h) = window.inner_height() {
-                        if let Some(h) = h.as_f64() {
-                            if (container_height() - h).abs() > 1.0 {
-                                container_height.set(h);
-                            }
-                        }
-                    }
-                }
-            }) as Box<dyn FnMut()>);
-
-            let scroll_options = web_sys_x::AddEventListenerOptions::new();
-            scroll_options.set_passive(true);
-            window
-                .add_event_listener_with_callback_and_add_event_listener_options(
-                    "scroll",
-                    scroll_closure.as_ref().unchecked_ref(),
-                    &scroll_options,
-                )
-                .ok();
-
-            let resize_options = web_sys_x::AddEventListenerOptions::new();
-            resize_options.set_passive(true);
-            window
-                .add_event_listener_with_callback_and_add_event_listener_options(
-                    "resize",
-                    resize_closure.as_ref().unchecked_ref(),
-                    &resize_options,
-                )
-                .ok();
-
-            *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
-                scroll_callback: scroll_closure,
-                resize_callback: resize_closure,
-                _raf_callback: raf_callback,
-            });
-        }));
-
-        if let Err(e) = ok {
-            tracing::warn!("window scroll listeners setup panicked, retrying: {e:?}");
-
-            spawn(async move {
-                let Some(window) = web_sys_x::window() else {
-                    return;
-                };
-                let promise = js_sys_x::Promise::new(&mut |resolve, _| {
-                    let _ =
-                        window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 50);
-                });
-                let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
-                retry += 1;
-            });
         }
+
+        // Set initial height from window
+        if let Ok(inner_height) = window.inner_height() {
+            if let Some(h) = inner_height.as_f64() {
+                container_height.set(h);
+            }
+        }
+
+        // rAF-based throttling: pending flag shared between scroll and rAF callbacks
+        let scroll_pending = Rc::new(std::cell::Cell::new(false));
+
+        // Create rAF callback once - it reads current scroll position and updates signal
+        let pending_for_raf = scroll_pending.clone();
+        let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
+            pending_for_raf.set(false);
+            if let Some(window) = web_sys_x::window() {
+                let window_y = window.scroll_y().unwrap_or(0.0);
+                if let Some(offset) = element_offset_top() {
+                    let new_scroll_top = (window_y - offset).max(0.0);
+                    if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                        scroll_top.set(new_scroll_top);
+                    }
+                }
+            }
+        })
+            as Box<dyn FnMut()>));
+
+        // Scroll handler schedules the rAF callback if not already pending
+        let pending_for_scroll = scroll_pending.clone();
+        let raf_for_scroll = raf_callback.clone();
+        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+            if pending_for_scroll.get() {
+                return;
+            }
+            pending_for_scroll.set(true);
+
+            if let Some(window) = web_sys_x::window() {
+                let _ = window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
+            }
+        }) as Box<dyn FnMut()>);
+
+        let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+            if let Some(window) = web_sys_x::window() {
+                if let Ok(h) = window.inner_height() {
+                    if let Some(h) = h.as_f64() {
+                        if (container_height() - h).abs() > 1.0 {
+                            container_height.set(h);
+                        }
+                    }
+                }
+            }
+        }) as Box<dyn FnMut()>);
+
+        let scroll_options = web_sys_x::AddEventListenerOptions::new();
+        scroll_options.set_passive(true);
+        window
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                "scroll",
+                scroll_closure.as_ref().unchecked_ref(),
+                &scroll_options,
+            )
+            .ok();
+
+        let resize_options = web_sys_x::AddEventListenerOptions::new();
+        resize_options.set_passive(true);
+        window
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                "resize",
+                resize_closure.as_ref().unchecked_ref(),
+                &resize_options,
+            )
+            .ok();
+
+        *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
+            scroll_callback: scroll_closure,
+            resize_callback: resize_closure,
+            _raf_callback: raf_callback,
+        });
     });
 }
 
