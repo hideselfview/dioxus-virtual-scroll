@@ -296,97 +296,125 @@ fn use_window_scroll_listeners(
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<WindowListenersCleanup>)));
     let handle_clone = handle.clone();
 
+    // Bump this signal to re-run the effect after a catch_unwind recovery.
+    let mut retry = use_signal(|| 0u8);
+
     use_effect(move || {
-        let Some(window) = web_sys_x::window() else {
-            return;
-        };
+        // Subscribe so that bumping `retry` re-triggers this effect.
+        let _attempt = retry();
 
-        // Disable browser scroll anchoring on the document element
-        if let Some(document) = window.document() {
-            if let Some(doc_element) = document.document_element() {
-                if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
-                    let _ = html_element.style().set_property("overflow-anchor", "none");
-                }
-            }
-        }
+        // Workaround: wry-bindgen can panic with U8BufferEmpty during startup
+        // when the JS bridge isn't fully initialized. See bae-fm/bae#42.
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let Some(window) = web_sys_x::window() else {
+                return;
+            };
 
-        // Set initial height from window
-        if let Ok(inner_height) = window.inner_height() {
-            if let Some(h) = inner_height.as_f64() {
-                container_height.set(h);
-            }
-        }
-
-        // rAF-based throttling: pending flag shared between scroll and rAF callbacks
-        let scroll_pending = Rc::new(std::cell::Cell::new(false));
-
-        // Create rAF callback once - it reads current scroll position and updates signal
-        let pending_for_raf = scroll_pending.clone();
-        let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
-            pending_for_raf.set(false);
-            if let Some(window) = web_sys_x::window() {
-                let window_y = window.scroll_y().unwrap_or(0.0);
-                if let Some(offset) = element_offset_top() {
-                    let new_scroll_top = (window_y - offset).max(0.0);
-                    if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                        scroll_top.set(new_scroll_top);
+            // Disable browser scroll anchoring on the document element
+            if let Some(document) = window.document() {
+                if let Some(doc_element) = document.document_element() {
+                    if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
+                        let _ = html_element.style().set_property("overflow-anchor", "none");
                     }
                 }
             }
-        })
-            as Box<dyn FnMut()>));
 
-        // Scroll handler schedules the rAF callback if not already pending
-        let pending_for_scroll = scroll_pending.clone();
-        let raf_for_scroll = raf_callback.clone();
-        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-            if pending_for_scroll.get() {
-                return;
+            // Set initial height from window
+            if let Ok(inner_height) = window.inner_height() {
+                if let Some(h) = inner_height.as_f64() {
+                    container_height.set(h);
+                }
             }
-            pending_for_scroll.set(true);
 
-            if let Some(window) = web_sys_x::window() {
-                let _ = window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
-            }
-        }) as Box<dyn FnMut()>);
+            // rAF-based throttling: pending flag shared between scroll and rAF callbacks
+            let scroll_pending = Rc::new(std::cell::Cell::new(false));
 
-        let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-            if let Some(window) = web_sys_x::window() {
-                if let Ok(h) = window.inner_height() {
-                    if let Some(h) = h.as_f64() {
-                        if (container_height() - h).abs() > 1.0 {
-                            container_height.set(h);
+            // Create rAF callback once - it reads current scroll position and updates signal
+            let pending_for_raf = scroll_pending.clone();
+            let raf_callback: Rc<Closure<dyn FnMut()>> =
+                Rc::new(Closure::wrap(Box::new(move || {
+                    pending_for_raf.set(false);
+                    if let Some(window) = web_sys_x::window() {
+                        let window_y = window.scroll_y().unwrap_or(0.0);
+                        if let Some(offset) = element_offset_top() {
+                            let new_scroll_top = (window_y - offset).max(0.0);
+                            if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                                scroll_top.set(new_scroll_top);
+                            }
+                        }
+                    }
+                })
+                    as Box<dyn FnMut()>));
+
+            // Scroll handler schedules the rAF callback if not already pending
+            let pending_for_scroll = scroll_pending.clone();
+            let raf_for_scroll = raf_callback.clone();
+            let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+                if pending_for_scroll.get() {
+                    return;
+                }
+                pending_for_scroll.set(true);
+
+                if let Some(window) = web_sys_x::window() {
+                    let _ =
+                        window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
+                }
+            }) as Box<dyn FnMut()>);
+
+            let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+                if let Some(window) = web_sys_x::window() {
+                    if let Ok(h) = window.inner_height() {
+                        if let Some(h) = h.as_f64() {
+                            if (container_height() - h).abs() > 1.0 {
+                                container_height.set(h);
+                            }
                         }
                     }
                 }
-            }
-        }) as Box<dyn FnMut()>);
+            }) as Box<dyn FnMut()>);
 
-        let scroll_options = web_sys_x::AddEventListenerOptions::new();
-        scroll_options.set_passive(true);
-        window
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "scroll",
-                scroll_closure.as_ref().unchecked_ref(),
-                &scroll_options,
-            )
-            .ok();
+            let scroll_options = web_sys_x::AddEventListenerOptions::new();
+            scroll_options.set_passive(true);
+            window
+                .add_event_listener_with_callback_and_add_event_listener_options(
+                    "scroll",
+                    scroll_closure.as_ref().unchecked_ref(),
+                    &scroll_options,
+                )
+                .ok();
 
-        let resize_options = web_sys_x::AddEventListenerOptions::new();
-        resize_options.set_passive(true);
-        window
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "resize",
-                resize_closure.as_ref().unchecked_ref(),
-                &resize_options,
-            )
-            .ok();
+            let resize_options = web_sys_x::AddEventListenerOptions::new();
+            resize_options.set_passive(true);
+            window
+                .add_event_listener_with_callback_and_add_event_listener_options(
+                    "resize",
+                    resize_closure.as_ref().unchecked_ref(),
+                    &resize_options,
+                )
+                .ok();
 
-        *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
-            scroll_callback: scroll_closure,
-            resize_callback: resize_closure,
-            _raf_callback: raf_callback,
-        });
+            *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
+                scroll_callback: scroll_closure,
+                resize_callback: resize_closure,
+                _raf_callback: raf_callback,
+            });
+        }));
+
+        if let Err(e) = ok {
+            tracing::warn!("window scroll listeners setup panicked, retrying: {e:?}");
+
+            spawn(async move {
+                let Some(window) = web_sys_x::window() else {
+                    return;
+                };
+                let promise = js_sys_x::Promise::new(&mut |resolve, _| {
+                    let _ =
+                        window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 50);
+                });
+                let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
+                retry += 1;
+            });
+        }
     });
 }
 
