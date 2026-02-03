@@ -273,10 +273,12 @@ fn use_resize_observer(
             tracing::warn!("resize observer setup panicked, retrying: {e:?}");
 
             spawn(async move {
+                let Some(window) = web_sys_x::window() else {
+                    return;
+                };
                 let promise = js_sys_x::Promise::new(&mut |resolve, _| {
-                    let _ = web_sys_x::window()
-                        .unwrap()
-                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 50);
+                    let _ =
+                        window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 50);
                 });
                 let _ = wasm_bindgen_futures_x::JsFuture::from(promise).await;
                 retry += 1;
