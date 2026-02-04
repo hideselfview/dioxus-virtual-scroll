@@ -214,52 +214,56 @@ fn use_resize_observer(
     let handle_clone = handle.clone();
 
     use_effect(move || {
-        let Some(window) = web_sys_x::window() else {
-            return;
-        };
-        let Some(document) = window.document() else {
-            return;
-        };
-        let Some(element) = document.get_element_by_id(&container_id) else {
-            return;
-        };
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let Some(window) = web_sys_x::window() else {
+                return;
+            };
+            let Some(document) = window.document() else {
+                return;
+            };
+            let Some(element) = document.get_element_by_id(&container_id) else {
+                return;
+            };
 
-        let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
-            Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                // Workaround: wry-bindgen can panic in callbacks when the app is
-                // reopened quickly after closing. See bae-fm/bae#30.
-                if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    for entry in entries {
-                        let sizes = entry.content_box_size();
-                        let size = sizes.get(0);
-                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                        let width = size.inline_size();
+            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
+                Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                    // Workaround: wry-bindgen can panic in callbacks when the app is
+                    // reopened quickly after closing. See bae-fm/bae#30.
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        for entry in entries {
+                            let sizes = entry.content_box_size();
+                            let size = sizes.get(0);
+                            let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                            let width = size.inline_size();
 
-                        if (width_signal() - width).abs() > 1.0 {
-                            width_signal.set(width);
-                        }
+                            if (width_signal() - width).abs() > 1.0 {
+                                width_signal.set(width);
+                            }
 
-                        if let Some(mut h_sig) = height_signal {
-                            let height = size.block_size();
-                            if (h_sig() - height).abs() > 1.0 {
-                                h_sig.set(height);
+                            if let Some(mut h_sig) = height_signal {
+                                let height = size.block_size();
+                                if (h_sig() - height).abs() > 1.0 {
+                                    h_sig.set(height);
+                                }
                             }
                         }
+                    })) {
+                        tracing::warn!("resize observer callback panicked: {e:?}");
                     }
-                })) {
-                    tracing::warn!("resize observer callback panicked: {e:?}");
-                }
-            }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
-        );
+                }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+            );
 
-        let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
-            .expect("ResizeObserver should be supported");
-        observer.observe(&element);
+            let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
+                .expect("ResizeObserver should be supported");
+            observer.observe(&element);
 
-        *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
-            observer,
-            _callback: callback,
-        });
+            *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
+                observer,
+                _callback: callback,
+            });
+        })) {
+            tracing::warn!("use_resize_observer setup panicked: {e:?}");
+        }
     });
 }
 
@@ -273,96 +277,103 @@ fn use_window_scroll_listeners(
     let handle_clone = handle.clone();
 
     use_effect(move || {
-        let Some(window) = web_sys_x::window() else {
-            return;
-        };
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let Some(window) = web_sys_x::window() else {
+                return;
+            };
 
-        // Disable browser scroll anchoring on the document element
-        if let Some(document) = window.document() {
-            if let Some(doc_element) = document.document_element() {
-                if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
-                    let _ = html_element.style().set_property("overflow-anchor", "none");
-                }
-            }
-        }
-
-        // Set initial height from window
-        if let Ok(inner_height) = window.inner_height() {
-            if let Some(h) = inner_height.as_f64() {
-                container_height.set(h);
-            }
-        }
-
-        // rAF-based throttling: pending flag shared between scroll and rAF callbacks
-        let scroll_pending = Rc::new(std::cell::Cell::new(false));
-
-        // Create rAF callback once - it reads current scroll position and updates signal
-        let pending_for_raf = scroll_pending.clone();
-        let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
-            pending_for_raf.set(false);
-            if let Some(window) = web_sys_x::window() {
-                let window_y = window.scroll_y().unwrap_or(0.0);
-                if let Some(offset) = element_offset_top() {
-                    let new_scroll_top = (window_y - offset).max(0.0);
-                    if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                        scroll_top.set(new_scroll_top);
+            // Disable browser scroll anchoring on the document element
+            if let Some(document) = window.document() {
+                if let Some(doc_element) = document.document_element() {
+                    if let Some(html_element) = doc_element.dyn_ref::<web_sys_x::HtmlElement>() {
+                        let _ = html_element.style().set_property("overflow-anchor", "none");
                     }
                 }
             }
-        })
-            as Box<dyn FnMut()>));
 
-        // Scroll handler schedules the rAF callback if not already pending
-        let pending_for_scroll = scroll_pending.clone();
-        let raf_for_scroll = raf_callback.clone();
-        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-            if pending_for_scroll.get() {
-                return;
+            // Set initial height from window
+            if let Ok(inner_height) = window.inner_height() {
+                if let Some(h) = inner_height.as_f64() {
+                    container_height.set(h);
+                }
             }
-            pending_for_scroll.set(true);
 
-            if let Some(window) = web_sys_x::window() {
-                let _ = window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
-            }
-        }) as Box<dyn FnMut()>);
+            // rAF-based throttling: pending flag shared between scroll and rAF callbacks
+            let scroll_pending = Rc::new(std::cell::Cell::new(false));
 
-        let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-            if let Some(window) = web_sys_x::window() {
-                if let Ok(h) = window.inner_height() {
-                    if let Some(h) = h.as_f64() {
-                        if (container_height() - h).abs() > 1.0 {
-                            container_height.set(h);
+            // Create rAF callback once - it reads current scroll position and updates signal
+            let pending_for_raf = scroll_pending.clone();
+            let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
+                pending_for_raf.set(false);
+                if let Some(window) = web_sys_x::window() {
+                    let window_y = window.scroll_y().unwrap_or(0.0);
+                    if let Some(offset) = element_offset_top() {
+                        let new_scroll_top = (window_y - offset).max(0.0);
+                        if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                            scroll_top.set(new_scroll_top);
                         }
                     }
                 }
-            }
-        }) as Box<dyn FnMut()>);
+            })
+                as Box<dyn FnMut()>));
 
-        let scroll_options = web_sys_x::AddEventListenerOptions::new();
-        scroll_options.set_passive(true);
-        window
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "scroll",
-                scroll_closure.as_ref().unchecked_ref(),
-                &scroll_options,
-            )
-            .ok();
+            // Scroll handler schedules the rAF callback if not already pending
+            let pending_for_scroll = scroll_pending.clone();
+            let raf_for_scroll = raf_callback.clone();
+            let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+                if pending_for_scroll.get() {
+                    return;
+                }
+                pending_for_scroll.set(true);
 
-        let resize_options = web_sys_x::AddEventListenerOptions::new();
-        resize_options.set_passive(true);
-        window
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "resize",
-                resize_closure.as_ref().unchecked_ref(),
-                &resize_options,
-            )
-            .ok();
+                if let Some(window) = web_sys_x::window() {
+                    let _ =
+                        window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
+                }
+            })
+                as Box<dyn FnMut()>);
 
-        *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
-            scroll_callback: scroll_closure,
-            resize_callback: resize_closure,
-            _raf_callback: raf_callback,
-        });
+            let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+                if let Some(window) = web_sys_x::window() {
+                    if let Ok(h) = window.inner_height() {
+                        if let Some(h) = h.as_f64() {
+                            if (container_height() - h).abs() > 1.0 {
+                                container_height.set(h);
+                            }
+                        }
+                    }
+                }
+            })
+                as Box<dyn FnMut()>);
+
+            let scroll_options = web_sys_x::AddEventListenerOptions::new();
+            scroll_options.set_passive(true);
+            window
+                .add_event_listener_with_callback_and_add_event_listener_options(
+                    "scroll",
+                    scroll_closure.as_ref().unchecked_ref(),
+                    &scroll_options,
+                )
+                .ok();
+
+            let resize_options = web_sys_x::AddEventListenerOptions::new();
+            resize_options.set_passive(true);
+            window
+                .add_event_listener_with_callback_and_add_event_listener_options(
+                    "resize",
+                    resize_closure.as_ref().unchecked_ref(),
+                    &resize_options,
+                )
+                .ok();
+
+            *handle_clone.borrow_mut() = Some(WindowListenersCleanup {
+                scroll_callback: scroll_closure,
+                resize_callback: resize_closure,
+                _raf_callback: raf_callback,
+            });
+        })) {
+            tracing::warn!("use_window_scroll_listeners setup panicked: {e:?}");
+        }
     });
 }
 
@@ -377,77 +388,83 @@ fn use_element_scroll_listeners(
     let handle_clone = handle.clone();
 
     use_effect(move || {
-        // Wait for the scroll container to be mounted
+        // Signal read must stay outside catch_unwind to maintain Dioxus reactivity
         let Some(mounted) = scroll_container() else {
             return;
         };
 
-        // Get the raw DOM element from MountedData
-        let Some(element) = mounted.downcast::<web_sys_x::Element>().cloned() else {
-            return;
-        };
-
-        // Disable browser scroll anchoring - virtual scroller manages position
-        if let Some(html_element) = element.dyn_ref::<web_sys_x::HtmlElement>() {
-            let _ = html_element.style().set_property("overflow-anchor", "none");
-        }
-
-        // Set initial height from element
-        let rect = element.get_bounding_client_rect();
-        container_height.set(rect.height());
-
-        // rAF-based throttling
-        let scroll_pending = Rc::new(std::cell::Cell::new(false));
-        let element_for_raf = element.clone();
-
-        let pending_for_raf = scroll_pending.clone();
-        let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
-            pending_for_raf.set(false);
-            let element_scroll_top = element_for_raf.scroll_top() as f64;
-            let offset = grid_offset_top();
-
-            if let Some(offset) = offset {
-                let new_scroll_top = (element_scroll_top - offset).max(0.0);
-                if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                    scroll_top.set(new_scroll_top);
-                }
-            } else {
-                // No offset yet, use raw scroll position
-                if (scroll_top() - element_scroll_top).abs() > 0.5 {
-                    scroll_top.set(element_scroll_top);
-                }
-            }
-        })
-            as Box<dyn FnMut()>));
-
-        let pending_for_scroll = scroll_pending.clone();
-        let raf_for_scroll = raf_callback.clone();
-        let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-            if pending_for_scroll.get() {
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Get the raw DOM element from MountedData
+            let Some(element) = mounted.downcast::<web_sys_x::Element>().cloned() else {
                 return;
+            };
+
+            // Disable browser scroll anchoring - virtual scroller manages position
+            if let Some(html_element) = element.dyn_ref::<web_sys_x::HtmlElement>() {
+                let _ = html_element.style().set_property("overflow-anchor", "none");
             }
-            pending_for_scroll.set(true);
 
-            if let Some(window) = web_sys_x::window() {
-                let _ = window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
-            }
-        }) as Box<dyn FnMut()>);
+            // Set initial height from element
+            let rect = element.get_bounding_client_rect();
+            container_height.set(rect.height());
 
-        let scroll_options = web_sys_x::AddEventListenerOptions::new();
-        scroll_options.set_passive(true);
-        element
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "scroll",
-                scroll_closure.as_ref().unchecked_ref(),
-                &scroll_options,
-            )
-            .ok();
+            // rAF-based throttling
+            let scroll_pending = Rc::new(std::cell::Cell::new(false));
+            let element_for_raf = element.clone();
 
-        *handle_clone.borrow_mut() = Some(ElementListenersCleanup {
-            element,
-            scroll_callback: scroll_closure,
-            _raf_callback: raf_callback,
-        });
+            let pending_for_raf = scroll_pending.clone();
+            let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
+                pending_for_raf.set(false);
+                let element_scroll_top = element_for_raf.scroll_top() as f64;
+                let offset = grid_offset_top();
+
+                if let Some(offset) = offset {
+                    let new_scroll_top = (element_scroll_top - offset).max(0.0);
+                    if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                        scroll_top.set(new_scroll_top);
+                    }
+                } else {
+                    // No offset yet, use raw scroll position
+                    if (scroll_top() - element_scroll_top).abs() > 0.5 {
+                        scroll_top.set(element_scroll_top);
+                    }
+                }
+            })
+                as Box<dyn FnMut()>));
+
+            let pending_for_scroll = scroll_pending.clone();
+            let raf_for_scroll = raf_callback.clone();
+            let scroll_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
+                if pending_for_scroll.get() {
+                    return;
+                }
+                pending_for_scroll.set(true);
+
+                if let Some(window) = web_sys_x::window() {
+                    let _ =
+                        window.request_animation_frame((*raf_for_scroll).as_ref().unchecked_ref());
+                }
+            })
+                as Box<dyn FnMut()>);
+
+            let scroll_options = web_sys_x::AddEventListenerOptions::new();
+            scroll_options.set_passive(true);
+            element
+                .add_event_listener_with_callback_and_add_event_listener_options(
+                    "scroll",
+                    scroll_closure.as_ref().unchecked_ref(),
+                    &scroll_options,
+                )
+                .ok();
+
+            *handle_clone.borrow_mut() = Some(ElementListenersCleanup {
+                element,
+                scroll_callback: scroll_closure,
+                _raf_callback: raf_callback,
+            });
+        })) {
+            tracing::warn!("use_element_scroll_listeners setup panicked: {e:?}");
+        }
     });
 }
 
@@ -460,41 +477,46 @@ fn use_element_resize_observer(
     let handle_clone = handle.clone();
 
     use_effect(move || {
+        // Signal read must stay outside catch_unwind to maintain Dioxus reactivity
         let Some(mounted) = scroll_container() else {
             return;
         };
 
-        let Some(element) = mounted.downcast::<web_sys_x::Element>().cloned() else {
-            return;
-        };
+        if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let Some(element) = mounted.downcast::<web_sys_x::Element>().cloned() else {
+                return;
+            };
 
-        let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
-            Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
-                // Workaround: wry-bindgen can panic with U32BufferEmpty when the
-                // app is reopened quickly after closing. See bae-fm/bae#30.
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    for entry in entries {
-                        let sizes = entry.content_box_size();
-                        let size = sizes.get(0);
-                        let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                        let height = size.block_size();
+            let callback: Closure<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)> = Closure::wrap(
+                Box::new(move |entries: Vec<web_sys_x::ResizeObserverEntry>| {
+                    // Workaround: wry-bindgen can panic with U32BufferEmpty when the
+                    // app is reopened quickly after closing. See bae-fm/bae#30.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        for entry in entries {
+                            let sizes = entry.content_box_size();
+                            let size = sizes.get(0);
+                            let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                            let height = size.block_size();
 
-                        if (container_height() - height).abs() > 1.0 {
-                            container_height.set(height);
+                            if (container_height() - height).abs() > 1.0 {
+                                container_height.set(height);
+                            }
                         }
-                    }
-                }));
-            }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
-        );
+                    }));
+                }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
+            );
 
-        let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
-            .expect("ResizeObserver should be supported");
-        observer.observe(&element);
+            let observer = web_sys_x::ResizeObserver::new(callback.as_ref().unchecked_ref())
+                .expect("ResizeObserver should be supported");
+            observer.observe(&element);
 
-        *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
-            observer,
-            _callback: callback,
-        });
+            *handle_clone.borrow_mut() = Some(ResizeObserverCleanup {
+                observer,
+                _callback: callback,
+            });
+        })) {
+            tracing::warn!("use_element_resize_observer setup panicked: {e:?}");
+        }
     });
 }
 
