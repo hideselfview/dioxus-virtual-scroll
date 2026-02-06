@@ -7,6 +7,7 @@
 //! By default, the grid creates its own scrollable container. Set `scroll_target` to `Window`
 //! to use window scrolling instead (useful when the grid is in a page that scrolls).
 
+use dioxus::core::{current_scope_id, Runtime};
 use dioxus::prelude::*;
 use std::rc::Rc;
 use wasm_bindgen_x::prelude::*;
@@ -194,6 +195,19 @@ impl GridLayout {
 // Shared helpers
 // =============================================================================
 
+/// Run a closure with the given scope on the Dioxus scope stack.
+///
+/// JS callbacks (ResizeObserver, scroll listeners) can fire during another component's render
+/// cycle. Without this, Dioxus sees the signal write as cross-scope and warns about ownership.
+/// Pushing the owning scope onto the stack before writing the signal suppresses the false positive.
+fn in_owner_scope(scope_id: ScopeId, f: impl FnOnce()) {
+    if let Some(rt) = Runtime::try_current() {
+        rt.in_scope(scope_id, f);
+    } else {
+        f();
+    }
+}
+
 /// Generate a unique container ID for this grid instance
 fn use_container_id() -> String {
     use_hook(|| {
@@ -210,6 +224,7 @@ fn use_resize_observer(
     mut width_signal: Signal<f64>,
     height_signal: Option<Signal<f64>>,
 ) {
+    let scope_id = current_scope_id();
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
     let handle_clone = handle.clone();
 
@@ -230,23 +245,25 @@ fn use_resize_observer(
                     // Workaround: wry-bindgen can panic in callbacks when the app is
                     // reopened quickly after closing. See bae-fm/bae#30.
                     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        for entry in entries {
-                            let sizes = entry.content_box_size();
-                            let size = sizes.get(0);
-                            let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                            let width = size.inline_size();
+                        in_owner_scope(scope_id, || {
+                            for entry in entries {
+                                let sizes = entry.content_box_size();
+                                let size = sizes.get(0);
+                                let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                                let width = size.inline_size();
 
-                            if (width_signal() - width).abs() > 1.0 {
-                                width_signal.set(width);
-                            }
+                                if (width_signal() - width).abs() > 1.0 {
+                                    width_signal.set(width);
+                                }
 
-                            if let Some(mut h_sig) = height_signal {
-                                let height = size.block_size();
-                                if (h_sig() - height).abs() > 1.0 {
-                                    h_sig.set(height);
+                                if let Some(mut h_sig) = height_signal {
+                                    let height = size.block_size();
+                                    if (h_sig() - height).abs() > 1.0 {
+                                        h_sig.set(height);
+                                    }
                                 }
                             }
-                        }
+                        });
                     })) {
                         tracing::warn!("resize observer callback panicked: {e:?}");
                     }
@@ -273,6 +290,7 @@ fn use_window_scroll_listeners(
     mut container_height: Signal<f64>,
     element_offset_top: Signal<Option<f64>>,
 ) {
+    let scope_id = current_scope_id();
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<WindowListenersCleanup>)));
     let handle_clone = handle.clone();
 
@@ -305,15 +323,17 @@ fn use_window_scroll_listeners(
             let pending_for_raf = scroll_pending.clone();
             let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
                 pending_for_raf.set(false);
-                if let Some(window) = web_sys_x::window() {
-                    let window_y = window.scroll_y().unwrap_or(0.0);
-                    if let Some(offset) = element_offset_top() {
-                        let new_scroll_top = (window_y - offset).max(0.0);
-                        if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                            scroll_top.set(new_scroll_top);
+                in_owner_scope(scope_id, || {
+                    if let Some(window) = web_sys_x::window() {
+                        let window_y = window.scroll_y().unwrap_or(0.0);
+                        if let Some(offset) = element_offset_top() {
+                            let new_scroll_top = (window_y - offset).max(0.0);
+                            if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                                scroll_top.set(new_scroll_top);
+                            }
                         }
                     }
-                }
+                });
             })
                 as Box<dyn FnMut()>));
 
@@ -334,15 +354,17 @@ fn use_window_scroll_listeners(
                 as Box<dyn FnMut()>);
 
             let resize_closure: Closure<dyn FnMut()> = Closure::wrap(Box::new(move || {
-                if let Some(window) = web_sys_x::window() {
-                    if let Ok(h) = window.inner_height() {
-                        if let Some(h) = h.as_f64() {
-                            if (container_height() - h).abs() > 1.0 {
-                                container_height.set(h);
+                in_owner_scope(scope_id, || {
+                    if let Some(window) = web_sys_x::window() {
+                        if let Ok(h) = window.inner_height() {
+                            if let Some(h) = h.as_f64() {
+                                if (container_height() - h).abs() > 1.0 {
+                                    container_height.set(h);
+                                }
                             }
                         }
                     }
-                }
+                });
             })
                 as Box<dyn FnMut()>);
 
@@ -384,6 +406,7 @@ fn use_element_scroll_listeners(
     mut container_height: Signal<f64>,
     grid_offset_top: Signal<Option<f64>>,
 ) {
+    let scope_id = current_scope_id();
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ElementListenersCleanup>)));
     let handle_clone = handle.clone();
 
@@ -415,20 +438,22 @@ fn use_element_scroll_listeners(
             let pending_for_raf = scroll_pending.clone();
             let raf_callback: Rc<Closure<dyn FnMut()>> = Rc::new(Closure::wrap(Box::new(move || {
                 pending_for_raf.set(false);
-                let element_scroll_top = element_for_raf.scroll_top() as f64;
-                let offset = grid_offset_top();
+                in_owner_scope(scope_id, || {
+                    let element_scroll_top = element_for_raf.scroll_top() as f64;
+                    let offset = grid_offset_top();
 
-                if let Some(offset) = offset {
-                    let new_scroll_top = (element_scroll_top - offset).max(0.0);
-                    if (scroll_top() - new_scroll_top).abs() > 0.5 {
-                        scroll_top.set(new_scroll_top);
+                    if let Some(offset) = offset {
+                        let new_scroll_top = (element_scroll_top - offset).max(0.0);
+                        if (scroll_top() - new_scroll_top).abs() > 0.5 {
+                            scroll_top.set(new_scroll_top);
+                        }
+                    } else {
+                        // No offset yet, use raw scroll position
+                        if (scroll_top() - element_scroll_top).abs() > 0.5 {
+                            scroll_top.set(element_scroll_top);
+                        }
                     }
-                } else {
-                    // No offset yet, use raw scroll position
-                    if (scroll_top() - element_scroll_top).abs() > 0.5 {
-                        scroll_top.set(element_scroll_top);
-                    }
-                }
+                });
             })
                 as Box<dyn FnMut()>));
 
@@ -473,6 +498,7 @@ fn use_element_resize_observer(
     scroll_container: ReadSignal<Option<Rc<MountedData>>>,
     mut container_height: Signal<f64>,
 ) {
+    let scope_id = current_scope_id();
     let handle = use_hook(|| Rc::new(std::cell::RefCell::new(None::<ResizeObserverCleanup>)));
     let handle_clone = handle.clone();
 
@@ -492,16 +518,18 @@ fn use_element_resize_observer(
                     // Workaround: wry-bindgen can panic with U32BufferEmpty when the
                     // app is reopened quickly after closing. See bae-fm/bae#30.
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        for entry in entries {
-                            let sizes = entry.content_box_size();
-                            let size = sizes.get(0);
-                            let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
-                            let height = size.block_size();
+                        in_owner_scope(scope_id, || {
+                            for entry in entries {
+                                let sizes = entry.content_box_size();
+                                let size = sizes.get(0);
+                                let size: web_sys_x::ResizeObserverSize = size.unchecked_into();
+                                let height = size.block_size();
 
-                            if (container_height() - height).abs() > 1.0 {
-                                container_height.set(height);
+                                if (container_height() - height).abs() > 1.0 {
+                                    container_height.set(height);
+                                }
                             }
-                        }
+                        });
                     }));
                 }) as Box<dyn FnMut(Vec<web_sys_x::ResizeObserverEntry>)>,
             );
